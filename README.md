@@ -1,47 +1,48 @@
 # Resto 001
 
-Proyecto con tres partes:
+Sistema Integral de Gestion para Restaurantes.
 
-- `backend`: API Node.js + MongoDB local.
-- `mobile/resto-mobile`: app Expo para mesonero.
-- `mesonero-web`: version web del mesonero con Vite.
+## Descripcion
 
-## Requisitos
+Resto 001 es una plataforma orientada a la operacion integral de restaurantes. El sistema centraliza pedidos, productos, pagos, reportes y sincronizacion en tiempo real entre distintas estaciones de trabajo.
 
+## Stack Tecnologico
+
+Este proyecto utiliza el stack MERN:
+
+- MongoDB
+- Express.js
+- React
 - Node.js
-- MongoDB local
-- Expo Go para probar mobile
 
-## Backend
+Ademas, integra sincronizacion Real-Time para mantener la informacion operativa actualizada entre los distintos modulos.
 
-```bash
-cd backend
-npm install
-npm start
-```
+## Estructura del Proyecto
 
-Servidor esperado en `http://192.168.0.100:5000`.
+- `/backend`: backend principal y servicios de negocio.
+- `/crud-caja`: modulo web de caja para gestion operativa y administrativa.
+- `/mesonero-web`: estacion web para mesonero.
+- `/mobile/resto-mobile`: aplicacion movil para operacion en sala.
 
-## Mobile
+## Estaciones del Sistema
 
-```bash
-cd mobile/resto-mobile
-npm install
-cp .env.example .env
-npx expo start --clear
-```
+- Mesonero Movil
+- Mesonero Web
+- Caja Web
 
-## Web
+## Funcionalidades Generales
 
-```bash
-cd mesonero-web
-npm install
-cp .env.example .env
-npm run dev
-```
+- Gestion de pedidos
+- Gestion de productos
+- Registro de pagos
+- Reportes operativos
+- Sincronizacion en tiempo real
+- Soporte para multiples estaciones de trabajo
 
-## Base de datos
+## Objetivo
 
-- MongoDB local
-- Base usada por el backend: `resto001`
-- Coleccion principal de pedidos: `orders`
+Proveer una solucion unificada para mejorar la velocidad de atencion, el control operativo y la trazabilidad de la informacion dentro del restaurante.
+
+## Estado del Proyecto
+
+En desarrollo.
