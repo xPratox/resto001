@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Caja - Panel Web</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-shape shape-a"></div>
+    <div class="bg-shape shape-b"></div>
+
+    <main class="layout">
+      <header class="hero">
+        <p class="eyebrow">Caja</p>
+        <h1>Panel de operaciones</h1>
+        <p id="lastUpdated" class="last-updated">Sincronizando pedidos...</p>
+        <p id="liveNotice" class="live-notice hidden"></p>
+      </header>
+
+      <section class="grid">
+        <article class="card">
+          <h2>Registrar Pago</h2>
+          <form id="pagoForm" class="stack">
+            <label>
+              Mesa
+              <input type="text" id="mesaPago" placeholder="Ej: Mesa 1" required />
+            </label>
+            <label>
+              Metodo
+              <select id="metodoPago" required>
+                <option value="efectivo">efectivo</option>
+                <option value="tarjeta">tarjeta</option>
+                <option value="transferencia">transferencia</option>
+                <option value="binance">binance</option>
+              </select>
+            </label>
+            <label>
+              Monto recibido
+              <input type="number" id="montoRecibido" min="0" step="0.01" required />
+            </label>
+            <label>
+              Estado
+              <select id="estadoPago">
+                <option value="completado">completado</option>
+                <option value="confirmado">confirmado</option>
+                <option value="rechazado">rechazado</option>
+              </select>
+            </label>
+            <button type="submit">Registrar pago</button>
+          </form>
+        </article>
+      </section>
+
+      <section class="card full">
+        <div class="toolbar">
+          <div>
+            <h2>Pedidos Recibidos de Mesonero</h2>
+            <p class="subtitle-inline">Sincronizacion en tiempo real con backend central</p>
+          </div>
+          <div class="toolbar-actions">
+            <button id="loadDemoPedidos" class="secondary">Cargar pedidos demo</button>
+            <button id="openReporte" class="secondary">Reporte</button>
+            <button id="reloadPedidos" class="secondary">Refrescar</button>
+          </div>
+        </div>
+        <div id="pedidosList" class="list"></div>
+      </section>
+
+      <section class="card full hidden" id="reporteSection">
+        <div class="toolbar">
+          <h2>Reporte de Ventas</h2>
+          <button id="reloadReporte" class="secondary">Refrescar reporte</button>
+        </div>
+        <div class="report-summary">
+          <article class="report-total-card">
+            <p class="report-label">Resumen del día</p>
+            <p id="reportTotal" class="report-total-amount">$0.00</p>
+            <p id="reportMeta" class="report-meta">0 pedidos pagados hoy</p>
+          </article>
+          <div id="reportDailyCards" class="report-days"></div>
+        </div>
+        <div id="reporteList" class="list"></div>
+      </section>
+
+    </main>
+
+    <script src="./config.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

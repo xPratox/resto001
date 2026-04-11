@@ -1,0 +1,12 @@
+{
+  "name": "resto001-workspace",
+  "private": true,
+  "scripts": {
+    "start": "npm run dev",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:caja": "npm --prefix crud-caja run start",
+    "dev:web": "npm --prefix mesonero-web run dev -- --host 0.0.0.0",
+    "dev:mobile": "npm --prefix mobile/resto-mobile run start",
+    "dev": "sh -c 'npm run dev:backend & npm run dev:caja & npm run dev:web & npm run dev:mobile'"
+  }
+}

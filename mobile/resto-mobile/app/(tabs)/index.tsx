@@ -1,0 +1,1469 @@
+import axios, { isAxiosError } from 'axios';
+import { FontAwesome5 } from '@expo/vector-icons';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import {
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+
+import { RestoBrandTheme } from '@/constants/theme';
+import { API_BASE_URL } from '@/lib/api';
+import { restoSocket } from '@/lib/socket';
+
+type MenuItem = {
+  id: string;
+  name: string;
+  price: number;
+  category: 'Bebidas' | 'Platos';
+};
+
+type OrderItem = {
+  _id?: string;
+  name: string;
+  price: number;
+  note: string;
+};
+
+type CurrentOrder = {
+  _id?: string;
+  table: string;
+  cliente_nombre?: string;
+  seccion: 'Sala' | 'Terraza';
+  items: OrderItem[];
+  total: number;
+  status: 'pendiente' | 'en cocina' | 'pagado';
+};
+
+type TableDefinition = {
+  table: string;
+  section: 'Sala' | 'Terraza';
+  capacity: number;
+  highlighted?: boolean;
+};
+
+type TableStatus = {
+  table: string;
+  seccion: 'Sala' | 'Terraza';
+  capacity: number;
+  highlighted?: boolean;
+  cliente_nombre?: string;
+  occupied: boolean;
+  orderId: string | null;
+  status: 'disponible' | 'pendiente' | 'en cocina' | 'pagado';
+};
+
+type BackendMenuItem = Partial<MenuItem> & {
+  nombre?: string;
+  categoria?: string;
+};
+
+type BackendTableStatus = Partial<TableStatus> & {
+  mesa?: string;
+  ocupada?: boolean;
+  order_id?: string | null;
+  estado?: TableStatus['status'];
+  section?: TableStatus['seccion'];
+  seccion?: TableStatus['seccion'];
+  cliente_nombre?: string;
+  capacity?: number;
+  highlighted?: boolean;
+};
+
+const TABLE_DEFINITIONS: TableDefinition[] = [
+  { table: 'Mesa 1', section: 'Sala', capacity: 4 },
+  { table: 'Mesa 2', section: 'Sala', capacity: 4 },
+  { table: 'Mesa 3', section: 'Sala', capacity: 4 },
+  { table: 'Mesa 4', section: 'Sala', capacity: 4 },
+  { table: 'Mesa 5', section: 'Sala', capacity: 4 },
+  { table: 'Mesa 6', section: 'Sala', capacity: 4 },
+  { table: 'Mesa 7', section: 'Sala', capacity: 8, highlighted: true },
+  { table: 'Mesa 8', section: 'Terraza', capacity: 4 },
+  { table: 'Mesa 9', section: 'Terraza', capacity: 4 },
+  { table: 'Mesa 10', section: 'Terraza', capacity: 4 },
+  { table: 'Mesa 11', section: 'Terraza', capacity: 4 },
+];
+const QUICK_NOTES = {
+  Bebidas: ['Sin hielo', 'Poca azucar', 'Vaso aparte'],
+  Platos: ['Con todo', 'Sin verduras', 'Extra queso'],
+} as const;
+
+const brand = RestoBrandTheme;
+
+const initialOrder: CurrentOrder = {
+  table: '',
+  cliente_nombre: '',
+  seccion: 'Sala',
+  items: [],
+  total: 0,
+  status: 'pendiente',
+};
+
+function normalizeOrder(order: CurrentOrder): CurrentOrder {
+  return {
+    _id: order._id,
+    table: order.table,
+    cliente_nombre: order.cliente_nombre || '',
+    seccion: order.seccion || 'Sala',
+    items: (order.items ?? []).map((item) => ({
+      _id: item._id,
+      name: item.name,
+      price: Number(item.price ?? 0),
+      note: item.note || 'Sin notas',
+    })),
+    total: Number(order.total ?? 0),
+    status: order.status ?? 'pendiente',
+  };
+}
+
+function normalizeMenuItem(item: BackendMenuItem, index: number): MenuItem | null {
+  const name = typeof item.name === 'string' ? item.name : typeof item.nombre === 'string' ? item.nombre : '';
+  const category =
+    item.category === 'Bebidas' || item.category === 'Platos'
+      ? item.category
+      : item.categoria === 'Bebidas' || item.categoria === 'Platos'
+        ? item.categoria
+        : 'Platos';
+
+  if (!name) {
+    return null;
+  }
+
+  return {
+    id: typeof item.id === 'string' && item.id ? item.id : `menu-${index}`,
+    name,
+    price: Number(item.price ?? 0),
+    category,
+  };
+}
+
+function normalizeTableStatus(table: BackendTableStatus): TableStatus | null {
+  const tableName = typeof table.table === 'string' ? table.table : typeof table.mesa === 'string' ? table.mesa : '';
+  const tableDefinition = TABLE_DEFINITIONS.find((item) => item.table === tableName);
+  const status =
+    table.status === 'disponible' ||
+    table.status === 'pendiente' ||
+    table.status === 'en cocina' ||
+    table.status === 'pagado'
+      ? table.status
+      : table.estado === 'disponible' ||
+          table.estado === 'pendiente' ||
+          table.estado === 'en cocina' ||
+          table.estado === 'pagado'
+        ? table.estado
+        : 'disponible';
+
+  if (!tableName) {
+    return null;
+  }
+
+  return {
+    table: tableName,
+    seccion:
+      table.seccion === 'Sala' || table.seccion === 'Terraza'
+        ? table.seccion
+        : table.section === 'Sala' || table.section === 'Terraza'
+          ? table.section
+          : tableDefinition?.section || 'Sala',
+    capacity: typeof table.capacity === 'number' ? table.capacity : tableDefinition?.capacity || 4,
+    highlighted: typeof table.highlighted === 'boolean' ? table.highlighted : Boolean(tableDefinition?.highlighted),
+    cliente_nombre: typeof table.cliente_nombre === 'string' ? table.cliente_nombre : '',
+    occupied: typeof table.occupied === 'boolean' ? table.occupied : Boolean(table.ocupada),
+    orderId: typeof table.orderId === 'string' ? table.orderId : typeof table.order_id === 'string' ? table.order_id : null,
+    status,
+  };
+}
+
+function resetOrderState(
+  setCurrentOrder: React.Dispatch<React.SetStateAction<CurrentOrder>>,
+  setPendingItemsToAdd: React.Dispatch<React.SetStateAction<OrderItem[]>>,
+  setStep: React.Dispatch<React.SetStateAction<1 | 2 | 3>>,
+  setSelectedPlate: React.Dispatch<React.SetStateAction<MenuItem | null>>,
+  setNote: React.Dispatch<React.SetStateAction<string>>,
+  setIsNotesModalVisible: React.Dispatch<React.SetStateAction<boolean>>,
+) {
+  setCurrentOrder(initialOrder);
+  setPendingItemsToAdd([]);
+  setStep(1);
+  setSelectedPlate(null);
+  setNote('');
+  setIsNotesModalVisible(false);
+}
+
+export default function HomeScreen() {
+  const router = useRouter();
+  const params = useLocalSearchParams<{
+    orderId?: string;
+    table?: string;
+    step?: string;
+    paymentSuccess?: string;
+    orderUpdatedSuccess?: string;
+  }>();
+  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [isLoadingMenu, setIsLoadingMenu] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [currentOrder, setCurrentOrder] = useState<CurrentOrder>(initialOrder);
+  const [selectedPlate, setSelectedPlate] = useState<MenuItem | null>(null);
+  const [isNotesModalVisible, setIsNotesModalVisible] = useState(false);
+  const [note, setNote] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [pendingItemsToAdd, setPendingItemsToAdd] = useState<OrderItem[]>([]);
+  const [tableStatuses, setTableStatuses] = useState<TableStatus[]>([]);
+  const [isLoadingTables, setIsLoadingTables] = useState(false);
+  const [activeSection, setActiveSection] = useState<'Sala' | 'Terraza'>('Sala');
+  const [isReservationModalVisible, setIsReservationModalVisible] = useState(false);
+  const [reservationName, setReservationName] = useState('');
+  const [pendingTableSelection, setPendingTableSelection] = useState<TableDefinition | null>(null);
+
+  const groupedMenuItems = useMemo(() => {
+    return menuItems.reduce<Record<string, MenuItem[]>>((groups, item) => {
+      if (!groups[item.category]) {
+        groups[item.category] = [];
+      }
+
+      groups[item.category].push(item);
+      return groups;
+    }, {});
+  }, [menuItems]);
+
+  const tablesBySection = useMemo(() => {
+    return TABLE_DEFINITIONS.filter((table) => table.section === activeSection).map((table) => {
+      const status = tableStatuses.find((item) => item.table === table.table);
+      return {
+        ...table,
+        occupied: Boolean(status?.occupied),
+        orderId: status?.orderId || null,
+        status: status?.status || 'disponible',
+        cliente_nombre: status?.cliente_nombre || '',
+      };
+    });
+  }, [activeSection, tableStatuses]);
+
+  const quickNotesForSelectedItem = selectedPlate ? QUICK_NOTES[selectedPlate.category] : QUICK_NOTES.Platos;
+
+  const fetchMenu = useCallback(async () => {
+    setIsLoadingMenu(true);
+
+    try {
+      const response = await axios.get<{ items?: BackendMenuItem[] }>(`${API_BASE_URL}/api/menu`, {
+        timeout: 10000,
+      });
+      const normalizedItems = Array.isArray(response.data.items)
+        ? response.data.items
+            .map((item, index) => normalizeMenuItem(item, index))
+            .filter((item): item is MenuItem => item !== null)
+        : [];
+
+      setMenuItems(normalizedItems);
+    } catch (error) {
+      const message = isAxiosError(error) ? error.response?.data?.message || error.message : 'Error desconocido cargando menu';
+
+      console.log('fetchMenu error:', {
+        apiBaseUrl: API_BASE_URL,
+        message,
+        status: isAxiosError(error) ? error.response?.status : null,
+      });
+      Alert.alert('Error cargando menu', message);
+      setErrorMessage(`No se pudo cargar el menu. ${message}`);
+    } finally {
+      setIsLoadingMenu(false);
+    }
+  }, []);
+
+  const fetchTableStatuses = useCallback(async (showLoader = false) => {
+    if (showLoader) {
+      setIsLoadingTables(true);
+    }
+
+    try {
+      const response = await axios.get<{ tables?: BackendTableStatus[] }>(`${API_BASE_URL}/api/tables/status`, {
+        timeout: 10000,
+      });
+      const normalizedTables = Array.isArray(response.data.tables)
+        ? response.data.tables
+            .map((table) => normalizeTableStatus(table))
+            .filter((table): table is TableStatus => table !== null)
+        : [];
+
+      setTableStatuses(normalizedTables);
+    } catch (error) {
+      const message = isAxiosError(error) ? error.response?.data?.message || error.message : 'Error desconocido cargando mesas';
+
+      console.log('fetchTableStatuses error:', {
+        apiBaseUrl: API_BASE_URL,
+        message,
+        status: isAxiosError(error) ? error.response?.status : null,
+      });
+      Alert.alert('Error cargando mesas', message);
+      setErrorMessage(`No se pudo cargar el estado de las mesas. ${message}`);
+    } finally {
+      if (showLoader) {
+        setIsLoadingTables(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchMenu();
+    void fetchTableStatuses(true);
+
+    const intervalId = setInterval(() => {
+      void fetchTableStatuses(false);
+    }, 4000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [fetchMenu, fetchTableStatuses]);
+
+  useEffect(() => {
+    if (restoSocket.connected) {
+      return undefined;
+    }
+
+    restoSocket.connect();
+
+    const handleOrderUpdated = () => {
+      void fetchTableStatuses(false);
+    };
+
+    restoSocket.on('orden_actualizada', handleOrderUpdated);
+
+    return () => {
+      restoSocket.off('orden_actualizada', handleOrderUpdated);
+    };
+  }, [fetchTableStatuses]);
+
+  useEffect(() => {
+    const feedbackMessage = params.paymentSuccess || params.orderUpdatedSuccess;
+
+    if (!feedbackMessage) {
+      return;
+    }
+
+    setCurrentOrder(initialOrder);
+    setPendingItemsToAdd([]);
+    setStep(1);
+    setErrorMessage('');
+    setSuccessMessage(feedbackMessage);
+  }, [params.orderUpdatedSuccess, params.paymentSuccess]);
+
+  const pendingItemsTotal = useMemo(
+    () => pendingItemsToAdd.reduce((sum, item) => sum + item.price, 0),
+    [pendingItemsToAdd],
+  );
+  const combinedOrderItems = useMemo(
+    () => (currentOrder._id ? [...currentOrder.items, ...pendingItemsToAdd] : currentOrder.items),
+    [currentOrder._id, currentOrder.items, pendingItemsToAdd],
+  );
+  const displayedTotal = useMemo(
+    () => (currentOrder._id ? currentOrder.total + pendingItemsTotal : currentOrder.total),
+    [currentOrder._id, currentOrder.total, pendingItemsTotal],
+  );
+  const totalItems = useMemo(() => combinedOrderItems.length, [combinedOrderItems]);
+  const canRemoveItems = !currentOrder._id || currentOrder.status === 'pendiente';
+  const canAddItemsToOrder = currentOrder.status !== 'pagado';
+
+  useEffect(() => {
+    const incomingOrderId = params.orderId;
+    const requestedStep = params.step;
+
+    if (requestedStep === '2') {
+      setStep(2);
+    }
+
+    if (!incomingOrderId || incomingOrderId === currentOrder._id) {
+      return;
+    }
+
+    const syncIncomingOrder = async () => {
+      try {
+        const response = await axios.get<{ order: CurrentOrder }>(`${API_BASE_URL}/api/orders/${incomingOrderId}`);
+        setCurrentOrder(normalizeOrder(response.data.order));
+        setPendingItemsToAdd([]);
+      } catch {
+        setErrorMessage('No se pudo cargar la orden activa seleccionada.');
+      }
+    };
+
+    syncIncomingOrder();
+  }, [currentOrder._id, params.orderId, params.step]);
+
+  const handleTableSelect = async (tableDefinition: TableDefinition) => {
+    setSuccessMessage('');
+    setErrorMessage('');
+
+    const tableStatus = tableStatuses.find((item) => item.table === tableDefinition.table);
+
+    if (tableStatus?.occupied && tableStatus.orderId) {
+      router.push({
+        pathname: '/active-order',
+        params: {
+          table: tableDefinition.table,
+          orderId: tableStatus.orderId,
+        },
+      });
+      return;
+    }
+
+    setPendingTableSelection(tableDefinition);
+    setReservationName('');
+    setIsReservationModalVisible(true);
+  };
+
+  const handleConfirmReservation = () => {
+    if (!pendingTableSelection) {
+      return;
+    }
+
+    setCurrentOrder({
+      ...initialOrder,
+      table: pendingTableSelection.table,
+      seccion: pendingTableSelection.section,
+      cliente_nombre: reservationName.trim(),
+    });
+    setPendingItemsToAdd([]);
+    setIsReservationModalVisible(false);
+    setPendingTableSelection(null);
+    setReservationName('');
+    setStep(2);
+  };
+
+  const handleOpenNotes = (item: MenuItem) => {
+    setErrorMessage('');
+    setSuccessMessage('');
+    setSelectedPlate(item);
+    setNote('');
+    setIsNotesModalVisible(true);
+    setStep(3);
+  };
+
+  const handleAddItem = async () => {
+    if (!selectedPlate) {
+      return;
+    }
+
+    const itemNote = note.trim() || 'Sin notas';
+
+    if (currentOrder._id) {
+      setPendingItemsToAdd((previous) => [
+        ...previous,
+        {
+          name: selectedPlate.name,
+          price: selectedPlate.price,
+          note: itemNote,
+        },
+      ]);
+      setSuccessMessage(`${selectedPlate.name} listo para actualizar el pedido.`);
+      setIsNotesModalVisible(false);
+      setSelectedPlate(null);
+      setNote('');
+      setStep(2);
+      return;
+    }
+
+    const nextItems = [
+      ...currentOrder.items,
+      {
+        name: selectedPlate.name,
+        price: selectedPlate.price,
+        note: itemNote,
+      },
+    ];
+
+    const total = nextItems.reduce((sum, item) => sum + item.price, 0);
+
+    setCurrentOrder({
+      table: currentOrder.table,
+      cliente_nombre: currentOrder.cliente_nombre,
+      seccion: currentOrder.seccion,
+      items: nextItems,
+      total,
+      status: 'pendiente',
+    });
+    setIsNotesModalVisible(false);
+    setSelectedPlate(null);
+    setNote('');
+    setStep(2);
+  };
+
+  const handleRemoveItem = (indexToRemove: number) => {
+    const itemToRemove = combinedOrderItems[indexToRemove];
+    const baseItemsCount = currentOrder.items.length;
+
+    if (!itemToRemove) {
+      return;
+    }
+
+    if (currentOrder._id && indexToRemove >= baseItemsCount) {
+      setPendingItemsToAdd((previous) => previous.filter((_, index) => index !== indexToRemove - baseItemsCount));
+      setSuccessMessage(`${itemToRemove.name} fue quitado de la actualización.`);
+      return;
+    }
+
+    if (!canRemoveItems) {
+      Alert.alert('No permitido', 'No puedes eliminar items cuando la orden ya no esta pendiente.');
+      return;
+    }
+
+    Alert.alert(
+      'Eliminar producto',
+      `Vas a eliminar ${itemToRemove.name} del pedido actual.`,
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: async () => {
+            if (currentOrder._id && itemToRemove._id) {
+              try {
+                const response = await axios.patch<{ order: CurrentOrder }>(`${API_BASE_URL}/api/orders/${currentOrder._id}/update-items`, {
+                  items: currentOrder.items.filter((item) => item._id !== itemToRemove._id),
+                },
+                );
+
+                setCurrentOrder(normalizeOrder(response.data.order));
+                setSuccessMessage(`${itemToRemove.name} fue eliminado de la orden.`);
+              } catch (error) {
+                if (isAxiosError(error)) {
+                  setErrorMessage(error.response?.data?.message || 'No se pudo eliminar el item.');
+                  return;
+                }
+
+                setErrorMessage('No se pudo eliminar el item.');
+                return;
+              }
+            }
+
+            const nextItems = currentOrder.items.filter((_, index) => index !== indexToRemove);
+            const total = nextItems.reduce((sum, item) => sum + item.price, 0);
+
+            setCurrentOrder({
+              table: currentOrder.table,
+              cliente_nombre: currentOrder.cliente_nombre,
+              seccion: currentOrder.seccion,
+              items: nextItems,
+              total,
+              status: 'pendiente',
+            });
+          },
+        },
+      ],
+    );
+  };
+
+  const handleCloseModal = () => {
+    setIsNotesModalVisible(false);
+    setSelectedPlate(null);
+    setNote('');
+    setStep(2);
+  };
+
+  const handleSubmitOrder = async () => {
+    if (!currentOrder.table || (!currentOrder._id && currentOrder.items.length === 0)) {
+      setErrorMessage('Selecciona una mesa y agrega al menos un plato antes de confirmar.');
+      return;
+    }
+
+    if (currentOrder._id && pendingItemsToAdd.length === 0) {
+      setErrorMessage('Agrega al menos un producto antes de actualizar el pedido.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMessage('');
+    setSuccessMessage('');
+
+    try {
+      const payload = currentOrder._id
+        ? {
+            table: currentOrder.table,
+            cliente_nombre: currentOrder.cliente_nombre,
+            seccion: currentOrder.seccion,
+            items: pendingItemsToAdd,
+            status: 'pendiente' as const,
+          }
+        : currentOrder;
+
+      const response = await axios.post<{ order: CurrentOrder }>(`${API_BASE_URL}/api/orders`, payload);
+      const normalizedOrder = normalizeOrder(response.data.order);
+      setCurrentOrder(normalizedOrder);
+
+      const successCopy = '¡Pedido procesado con éxito!';
+
+      if (currentOrder._id) {
+        resetOrderState(
+          setCurrentOrder,
+          setPendingItemsToAdd,
+          setStep,
+          setSelectedPlate,
+          setNote,
+          setIsNotesModalVisible,
+        );
+        Alert.alert('Pedido actualizado', successCopy);
+        router.replace({
+          pathname: '/',
+          params: {
+            orderUpdatedSuccess: successCopy,
+          },
+        });
+        return;
+      }
+
+      resetOrderState(
+        setCurrentOrder,
+        setPendingItemsToAdd,
+        setStep,
+        setSelectedPlate,
+        setNote,
+        setIsNotesModalVisible,
+      );
+      Alert.alert('Pedido enviado', successCopy);
+      router.replace({
+        pathname: '/',
+        params: {
+          orderUpdatedSuccess: successCopy,
+        },
+      });
+
+      try {
+        const tablesResponse = await axios.get<{ tables: TableStatus[] }>(`${API_BASE_URL}/api/tables/status`);
+        setTableStatuses(tablesResponse.data.tables ?? []);
+      } catch {
+        // noop
+      }
+    } catch (error) {
+      if (isAxiosError(error)) {
+        const activeOrderId = error.response?.data?.order?._id;
+        const backendMessage = error.response?.data?.message;
+
+        if (backendMessage === 'La mesa ya tiene un pedido activo' && activeOrderId) {
+          setErrorMessage(backendMessage);
+          router.push({
+            pathname: '/active-order',
+            params: {
+              table: currentOrder.table,
+              orderId: activeOrderId,
+            },
+          });
+          return;
+        }
+
+        setErrorMessage(backendMessage || 'No se pudo enviar el pedido al backend. Revisa tu IP local y el puerto 5000.');
+        return;
+      }
+
+      setErrorMessage('No se pudo enviar el pedido al backend. Revisa tu IP local y el puerto 5000.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView contentContainerStyle={styles.content}>
+        <View style={styles.heroCard}>
+          <Text style={styles.overline}>Resto 001</Text>
+          <Text style={styles.title}>Mesonero móvil con flujo rápido para mesa, plato y nota.</Text>
+          <Text style={styles.subtitle}>Backend local: {API_BASE_URL}</Text>
+        </View>
+
+        <View style={styles.stepsRow}>
+          {[1, 2, 3].map((stepNumber) => {
+            const active = step === stepNumber;
+
+            return (
+              <View key={stepNumber} style={[styles.stepPill, active && styles.stepPillActive]}>
+                <Text style={[styles.stepLabel, active && styles.stepLabelActive]}>Paso {stepNumber}</Text>
+              </View>
+            );
+          })}
+        </View>
+
+        {step === 1 ? (
+          <View style={styles.sectionCard}>
+            <Text style={styles.sectionTitle}>1. Selección de mesa</Text>
+            <Text style={styles.sectionText}>Organiza el salón por zonas y aparta una mesa con nombre opcional antes de cargar productos.</Text>
+
+            <View style={styles.sectionTabs}>
+              {[
+                { key: 'Sala', label: 'SALA PRINCIPAL' },
+                { key: 'Terraza', label: 'TERRAZA' },
+              ].map((section) => {
+                const selected = activeSection === section.key;
+
+                return (
+                  <Pressable
+                    key={section.key}
+                    onPress={() => setActiveSection(section.key as 'Sala' | 'Terraza')}
+                    style={[styles.sectionTab, selected && styles.sectionTabActive]}>
+                    <Text style={[styles.sectionTabText, selected && styles.sectionTabTextActive]}>{section.label}</Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {isLoadingTables ? (
+              <View style={styles.loaderWrap}>
+                <ActivityIndicator size="large" color={brand.accent.sunsetOrange} />
+                <Text style={styles.loaderText}>Consultando estado de mesas...</Text>
+              </View>
+            ) : null}
+
+            <View style={styles.tableGrid}>
+              {tablesBySection.map((table) => {
+                const selected = currentOrder.table === table.table;
+                const occupied = Boolean(table.occupied);
+
+                return (
+                  <Pressable
+                    key={table.table}
+                    onPress={() => handleTableSelect(table)}
+                    style={[
+                      styles.giantButton,
+                      table.highlighted && styles.giantButtonLarge,
+                      occupied && styles.giantButtonOccupied,
+                      selected && !occupied && styles.giantButtonSelected,
+                    ]}>
+                    <View style={styles.tableButtonHeader}>
+                      <Text style={[styles.tableStatusBadge, occupied && styles.tableStatusBadgeOccupied]}>
+                        {occupied ? 'Ocupada' : 'Disponible'}
+                      </Text>
+                      {occupied ? <FontAwesome5 name="user-alt" size={16} color={brand.text.contrastOnAccent} /> : null}
+                    </View>
+                    <Text style={[styles.giantButtonLabel, occupied && styles.giantButtonLabelOccupied]}>
+                      {table.table}
+                    </Text>
+                    <Text style={[styles.giantButtonMeta, occupied && styles.giantButtonMetaOccupied]}>
+                      {occupied
+                        ? table.cliente_nombre || 'Cliente sin nombre'
+                        : `${table.capacity} personas${table.highlighted ? ' · mesa destacada' : ''}`}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        ) : null}
+
+        {step === 2 ? (
+          <View style={styles.sectionCard}>
+            <View style={styles.sectionHeaderRow}>
+              <View style={styles.sectionHeaderCopy}>
+                <Text style={styles.sectionTitle}>2. Menu de bebidas y platos</Text>
+                <Text style={styles.sectionText}>Toca cualquier item para abrir el paso 3 de notas.</Text>
+              </View>
+              <Pressable onPress={() => setStep(1)} style={[styles.secondaryChip, styles.secondaryChipMenuBack]}>
+                <Text style={styles.secondaryChipText}>Cambiar mesa</Text>
+              </Pressable>
+            </View>
+
+            {isLoadingMenu ? (
+              <View style={styles.loaderWrap}>
+                <ActivityIndicator size="large" color={brand.accent.sunsetOrange} />
+                <Text style={styles.loaderText}>Cargando platos...</Text>
+              </View>
+            ) : (
+              <View style={styles.menuList}>
+                {['Bebidas', 'Platos'].map((category) => {
+                  const items = groupedMenuItems[category] ?? [];
+
+                  if (items.length === 0) {
+                    return null;
+                  }
+
+                  return (
+                    <View key={category} style={styles.menuSection}>
+                      <Text style={styles.menuSectionTitle}>{category}</Text>
+                      {items.map((item) => (
+                        <Pressable
+                          key={item.id}
+                          onPress={() => handleOpenNotes(item)}
+                          style={styles.menuCard}>
+                          <View style={styles.menuCopy}>
+                            <Text style={styles.menuName}>{item.name}</Text>
+                            <Text style={styles.menuCategory}>{item.category}</Text>
+                          </View>
+                          <Text style={styles.menuPrice}>${item.price.toFixed(2)}</Text>
+                        </Pressable>
+                      ))}
+                    </View>
+                  );
+                })}
+              </View>
+            )}
+
+            <View style={styles.orderCard}>
+              <Text style={styles.orderTitle}>Pedido actual</Text>
+              <Text style={styles.orderMeta}>{currentOrder.table || 'Mesa pendiente'}</Text>
+              <Text style={styles.orderMeta}>{currentOrder.seccion || 'Sala'}</Text>
+              {currentOrder.cliente_nombre ? <Text style={styles.orderMeta}>Reserva: {currentOrder.cliente_nombre}</Text> : null}
+              <Text style={styles.orderMeta}>{totalItems} platos agregados</Text>
+
+              {currentOrder._id && canAddItemsToOrder ? (
+                <Pressable onPress={() => setStep(2)} style={styles.addMoreButton}>
+                  <Text style={styles.addMoreButtonText}>Agregar mas platos</Text>
+                </Pressable>
+              ) : null}
+
+              {currentOrder._id ? (
+                <Pressable
+                  onPress={() =>
+                    router.push({
+                      pathname: '/active-order',
+                      params: {
+                        table: currentOrder.table,
+                        orderId: currentOrder._id,
+                      },
+                    })
+                  }
+                  style={styles.viewActiveOrderButton}>
+                  <Text style={styles.viewActiveOrderButtonText}>Ver pedido activo</Text>
+                </Pressable>
+              ) : null}
+
+              {combinedOrderItems.map((item, index) => (
+                <View key={`${item.name}-${index}`} style={styles.orderItemRow}>
+                  <View style={styles.orderItemCopy}>
+                    <View style={styles.orderItemHeader}>
+                      <Text style={styles.orderItemName}>{item.name}</Text>
+                      {canRemoveItems ? (
+                        <Pressable
+                          onPress={() => handleRemoveItem(index)}
+                          style={styles.removeItemButton}>
+                          <Text style={styles.removeItemButtonText}>Quitar</Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+                    <Text style={styles.orderItemNote}>{item.note}</Text>
+                  </View>
+                  <Text style={styles.orderItemPrice}>${item.price.toFixed(2)}</Text>
+                </View>
+              ))}
+
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Total</Text>
+                <Text style={styles.totalValue}>${displayedTotal.toFixed(2)}</Text>
+              </View>
+
+              <Pressable
+                onPress={handleSubmitOrder}
+                disabled={
+                  isSubmitting ||
+                  (!currentOrder._id && currentOrder.items.length === 0) ||
+                  (Boolean(currentOrder._id) && pendingItemsToAdd.length === 0)
+                }
+                style={[
+                  styles.primaryAction,
+                  (
+                    isSubmitting ||
+                    (!currentOrder._id && currentOrder.items.length === 0) ||
+                    (Boolean(currentOrder._id) && pendingItemsToAdd.length === 0)
+                  ) && styles.disabledAction,
+                ]}>
+                <Text style={styles.primaryActionText}>
+                  {isSubmitting ? 'Enviando pedido...' : currentOrder._id ? 'Actualizar Pedido' : 'Confirmar'}
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        ) : null}
+
+        {successMessage ? (
+          <View style={styles.successBanner}>
+            <Text style={styles.successText}>{successMessage}</Text>
+          </View>
+        ) : null}
+
+        {errorMessage ? (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{errorMessage}</Text>
+          </View>
+        ) : null}
+      </ScrollView>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isReservationModalVisible}
+        onRequestClose={() => {
+          setIsReservationModalVisible(false);
+          setPendingTableSelection(null);
+          setReservationName('');
+        }}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Reserva de mesa</Text>
+            <Text style={styles.modalSubtitle}>{pendingTableSelection?.table ?? 'Mesa seleccionada'}</Text>
+            <Text style={styles.modalHelper}>¿Nombre para la reserva? (Opcional)</Text>
+
+            <TextInput
+              value={reservationName}
+              onChangeText={setReservationName}
+              placeholder="Ej: Prato"
+              placeholderTextColor={brand.text.metallicSoft}
+              style={styles.notesInput}
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => {
+                  setIsReservationModalVisible(false);
+                  setPendingTableSelection(null);
+                  setReservationName('');
+                }}
+                style={styles.modalSecondaryAction}>
+                <Text style={styles.modalSecondaryText}>Cancelar</Text>
+              </Pressable>
+              <Pressable onPress={handleConfirmReservation} style={styles.primaryAction}>
+                <Text style={styles.primaryActionText}>Continuar</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="slide"
+        transparent
+        visible={isNotesModalVisible}
+        onRequestClose={handleCloseModal}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>3. Nota para cocina</Text>
+            <Text style={styles.modalSubtitle}>{selectedPlate?.name ?? 'Plato seleccionado'}</Text>
+            <Text style={styles.modalHelper}>
+              Este paso agrega el item al pedido. El envio al backend sucede cuando pulsas Confirmar en Pedido actual.
+            </Text>
+
+            <View style={styles.quickNotesRow}>
+              {quickNotesForSelectedItem.map((quickNote) => {
+                const selected = note === quickNote;
+
+                return (
+                  <Pressable
+                    key={quickNote}
+                    onPress={() => setNote(quickNote)}
+                    style={[styles.quickNoteChip, selected && styles.quickNoteChipActive]}>
+                    <Text style={[styles.quickNoteText, selected && styles.quickNoteTextActive]}>
+                      {quickNote}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <TextInput
+              value={note}
+              onChangeText={setNote}
+              placeholder="Escribe una nota para cocina"
+              placeholderTextColor={brand.text.metallicSoft}
+              multiline
+              style={styles.notesInput}
+            />
+
+            <View style={styles.modalActions}>
+              <Pressable onPress={handleCloseModal} style={styles.modalSecondaryAction}>
+                <Text style={styles.modalSecondaryText}>Cancelar</Text>
+              </Pressable>
+              <Pressable onPress={handleAddItem} style={styles.primaryAction}>
+                <Text style={styles.primaryActionText}>Agregar</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  safeArea: {
+    flex: 1,
+    backgroundColor: '#0F172A',
+  },
+  content: {
+    padding: 20,
+    gap: 18,
+    paddingBottom: 36,
+  },
+  heroCard: {
+    borderRadius: 28,
+    backgroundColor: '#1E293B',
+    padding: 22,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  overline: {
+    color: '#FF6B35',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+  },
+  title: {
+    marginTop: 12,
+    color: '#F8FAFC',
+    fontSize: 28,
+    fontWeight: '800',
+    lineHeight: 34,
+  },
+  subtitle: {
+    marginTop: 10,
+    color: '#CBD5E1',
+    fontSize: 14,
+  },
+  stepsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  stepPill: {
+    flex: 1,
+    borderRadius: 18,
+    paddingVertical: 12,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  stepPillActive: {
+    backgroundColor: '#FF6B35',
+    borderColor: '#FF6B35',
+  },
+  stepLabel: {
+    textAlign: 'center',
+    color: '#F8FAFC',
+    fontWeight: '700',
+  },
+  stepLabelActive: {
+    color: '#000000',
+  },
+  sectionCard: {
+    borderRadius: 28,
+    backgroundColor: '#1E293B',
+    padding: 18,
+    gap: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  sectionHeaderRow: {
+    gap: 14,
+  },
+  sectionHeaderCopy: {
+    maxWidth: '100%',
+  },
+  sectionTitle: {
+    color: '#F8FAFC',
+    fontSize: 24,
+    fontWeight: '800',
+  },
+  sectionText: {
+    marginTop: 4,
+    color: '#CBD5E1',
+    fontSize: 14,
+  },
+  sectionTabs: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  sectionTab: {
+    flex: 1,
+    minHeight: 46,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#334155',
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+  },
+  sectionTabActive: {
+    borderColor: '#FF6B35',
+    backgroundColor: '#FF6B35',
+  },
+  sectionTabText: {
+    color: '#F8FAFC',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  sectionTabTextActive: {
+    color: '#000000',
+  },
+  tableGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  giantButton: {
+    width: '48%',
+    minHeight: 118,
+    borderRadius: 16,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#334155',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    padding: 16,
+  },
+  giantButtonLarge: {
+    width: '100%',
+    minHeight: 154,
+  },
+  giantButtonOccupied: {
+    backgroundColor: '#FF6B35',
+    borderColor: '#FF6B35',
+  },
+  giantButtonSelected: {
+    borderColor: '#FF6B35',
+  },
+  tableButtonHeader: {
+    width: '100%',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  tableStatusBadge: {
+    color: '#CBD5E1',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  tableStatusBadgeOccupied: {
+    color: '#000000',
+  },
+  giantButtonLabel: {
+    color: '#F8FAFC',
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  giantButtonLabelOccupied: {
+    color: '#000000',
+  },
+  giantButtonMeta: {
+    color: '#CBD5E1',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  giantButtonMetaOccupied: {
+    color: '#000000',
+  },
+  primaryAction: {
+    minHeight: 56,
+    borderRadius: 12,
+    backgroundColor: '#FF6B35',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  disabledAction: {
+    backgroundColor: '#334155',
+  },
+  primaryActionText: {
+    color: '#000000',
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  secondaryChip: {
+    borderRadius: 12,
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  secondaryChipMenuBack: {
+    alignSelf: 'flex-start',
+  },
+  secondaryChipText: {
+    color: '#F8FAFC',
+    fontWeight: '700',
+  },
+  loaderWrap: {
+    paddingVertical: 20,
+    alignItems: 'center',
+    gap: 12,
+  },
+  loaderText: {
+    color: '#F8FAFC',
+    fontSize: 15,
+  },
+  menuList: {
+    gap: 12,
+  },
+  menuSection: {
+    gap: 10,
+  },
+  menuSectionTitle: {
+    color: '#FF6B35',
+    fontSize: 18,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  menuCard: {
+    minHeight: 86,
+    borderRadius: 16,
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 18,
+    paddingVertical: 16,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  menuCopy: {
+    flex: 1,
+    paddingRight: 12,
+    gap: 4,
+  },
+  menuName: {
+    color: '#F8FAFC',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  menuCategory: {
+    color: '#CBD5E1',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  menuPrice: {
+    color: '#FF6B35',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  orderCard: {
+    marginTop: 8,
+    borderRadius: 16,
+    backgroundColor: '#0F172A',
+    padding: 16,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  orderTitle: {
+    color: '#F8FAFC',
+    fontSize: 20,
+    fontWeight: '800',
+  },
+  addMoreButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+    backgroundColor: '#1E293B',
+  },
+  addMoreButtonText: {
+    color: '#F8FAFC',
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  viewActiveOrderButton: {
+    alignSelf: 'flex-start',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#FF6B35',
+    backgroundColor: '#1E293B',
+  },
+  viewActiveOrderButtonText: {
+    color: '#FF6B35',
+    fontSize: 13,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  orderMeta: {
+    color: '#CBD5E1',
+    fontSize: 14,
+  },
+  orderItemRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#334155',
+  },
+  orderItemCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  orderItemHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  orderItemName: {
+    color: '#F8FAFC',
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  removeItemButton: {
+    borderRadius: 12,
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  removeItemButtonText: {
+    color: '#F8FAFC',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+  },
+  orderItemNote: {
+    color: '#CBD5E1',
+    fontSize: 13,
+  },
+  orderItemPrice: {
+    color: '#FF6B35',
+    fontWeight: '800',
+    fontSize: 16,
+  },
+  totalRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  totalLabel: {
+    color: '#CBD5E1',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  totalValue: {
+    color: '#F8FAFC',
+    fontSize: 22,
+    fontWeight: '800',
+  },
+  successBanner: {
+    borderRadius: 20,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#FF6B35',
+    padding: 16,
+  },
+  successText: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  errorBanner: {
+    borderRadius: 20,
+    backgroundColor: '#1E293B',
+    borderWidth: 1,
+    borderColor: '#FF6B35',
+    padding: 16,
+  },
+  errorText: {
+    color: '#F8FAFC',
+    fontSize: 15,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.78)',
+    justifyContent: 'flex-end',
+  },
+  modalCard: {
+    backgroundColor: '#1E293B',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    padding: 20,
+    gap: 16,
+    borderTopWidth: 1,
+    borderLeftWidth: 1,
+    borderRightWidth: 1,
+    borderColor: '#334155',
+  },
+  modalTitle: {
+    color: '#F8FAFC',
+    fontSize: 24,
+    fontWeight: '800',
+  },
+  modalSubtitle: {
+    color: '#CBD5E1',
+    fontSize: 16,
+  },
+  modalHelper: {
+    color: '#CBD5E1',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  quickNotesRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  quickNoteChip: {
+    borderRadius: 12,
+    backgroundColor: '#0F172A',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  quickNoteChipActive: {
+    backgroundColor: '#FF6B35',
+    borderColor: '#FF6B35',
+  },
+  quickNoteText: {
+    color: '#F8FAFC',
+    fontWeight: '700',
+  },
+  quickNoteTextActive: {
+    color: '#000000',
+  },
+  notesInput: {
+    minHeight: 120,
+    borderRadius: 12,
+    backgroundColor: '#0F172A',
+    color: '#F8FAFC',
+    paddingHorizontal: 16,
+    paddingVertical: 16,
+    textAlignVertical: 'top',
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalSecondaryAction: {
+    flex: 1,
+    minHeight: 56,
+    borderRadius: 12,
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  modalSecondaryText: {
+    color: '#F8FAFC',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+});

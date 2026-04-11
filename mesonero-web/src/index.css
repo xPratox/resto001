@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    --resto-background-deep-carbon: #0F172A;
+    --resto-background-slate-accent: #1E293B;
+    --resto-text-metallic-light: #F8FAFC;
+    --resto-accent-sunset-orange: #FF6B35;
+    --resto-status-success: #10B981;
+    --resto-status-error: #EF4444;
+    --resto-border-subtle: #334155;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    @apply bg-deepCarbon;
+  }
+
+  body {
+    background:
+      radial-gradient(circle at top left, rgba(255, 107, 53, 0.18), transparent 24%),
+      radial-gradient(circle at bottom right, rgba(255, 107, 53, 0.12), transparent 24%),
+      linear-gradient(180deg, var(--resto-background-deep-carbon) 0%, #111827 100%);
+    @apply m-0 min-h-screen font-sans text-metallicLight;
+  }
+
+  button {
+    @apply min-h-11;
+  }
+
+  #root {
+    @apply min-h-screen;
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply border border-carbonLine bg-slateAccent/90 backdrop-blur-xl;
+  }
+}
