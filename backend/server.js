@@ -43,6 +43,13 @@ const TABLE_DEFINITIONS = [
 	{ table: 'Mesa 11', section: 'Terraza', capacity: 4, highlighted: false },
 ];
 const TABLES = TABLE_DEFINITIONS.map((table) => table.table);
+const ORDER_STATUS = {
+	AVAILABLE: 'disponible',
+	PENDING: 'pendiente',
+	KITCHEN: 'en cocina',
+	CLEANING: 'limpieza',
+	PAID: 'pagado',
+};
 
 const brandLog = {
 	info: (message) => console.log(chalk.hex('#F8FAFC').bgHex('#0F172A')(` ${message} `)),
@@ -55,6 +62,75 @@ function getTableDefinition(tableName) {
 	return TABLE_DEFINITIONS.find((table) => table.table === tableName) || null;
 }
 
+function hasRegisteredPayment(order) {
+	return Boolean(order?.hora_pago);
+}
+
+function isOrderInCleaning(order) {
+	if (!order || order.mesa_liberada === true) {
+		return false;
+	}
+
+	return order.status === ORDER_STATUS.CLEANING || (order.status === ORDER_STATUS.PAID && hasRegisteredPayment(order));
+}
+
+function isOrderLocked(order) {
+	return Boolean(order) && (order.status === ORDER_STATUS.CLEANING || order.status === ORDER_STATUS.PAID || hasRegisteredPayment(order));
+}
+
+function getVisibleTableStatus(order) {
+	if (!order || order.mesa_liberada === true) {
+		return ORDER_STATUS.AVAILABLE;
+	}
+
+	if (isOrderInCleaning(order)) {
+		return ORDER_STATUS.CLEANING;
+	}
+
+	return order.status || ORDER_STATUS.PENDING;
+}
+
+function buildActiveOrdersFilter(extra = {}) {
+	return {
+		...extra,
+		$or: [
+			{ status: { $in: [ORDER_STATUS.PENDING, ORDER_STATUS.KITCHEN, ORDER_STATUS.CLEANING] } },
+			{ status: ORDER_STATUS.PAID, mesa_liberada: { $ne: true } },
+			{ hora_pago: { $ne: null }, mesa_liberada: { $ne: true } },
+		],
+	};
+}
+
+async function repairReleasedPaidOrdersForTable(table) {
+	const stalePaidOrders = await Order.find({
+		table,
+		mesa_liberada: true,
+		$or: [
+			{ status: { $ne: ORDER_STATUS.PAID } },
+			{ hora_pago: null },
+		],
+	}).sort({ createdAt: -1 });
+
+	if (stalePaidOrders.length === 0) {
+		return 0;
+	}
+
+	const staleIds = stalePaidOrders.map((order) => order._id);
+	const result = await Order.updateMany(
+		{
+			_id: { $in: staleIds },
+		},
+		{
+			$set: {
+				status: ORDER_STATUS.PAID,
+				hora_pago: new Date(),
+			},
+		}
+	);
+
+	return result.modifiedCount ?? staleIds.length;
+}
+
 function emitOrderRealtime(action, order) {
 	if (!order) {
 		return;
@@ -65,6 +141,7 @@ function emitOrderRealtime(action, order) {
 		orderId: String(order._id),
 		table: order.table,
 		status: order.status,
+		tableStatus: getVisibleTableStatus(order),
 		seccion: order.seccion || getTableDefinition(order.table)?.section || 'Sala',
 		cliente_nombre: order.cliente_nombre || '',
 		order,
@@ -73,13 +150,24 @@ function emitOrderRealtime(action, order) {
 	io.emit('orden_actualizada', payload);
 
 	if (action === 'created') {
+		io.emit('mesa_ocupada', payload);
 		io.emit('new_order', order);
 		return;
+	}
+
+	if (action === 'paid') {
+		io.emit('mesa_en_limpieza', payload);
+		io.emit('mesa_actualizada', payload);
 	}
 
 	if (action === 'deleted') {
 		io.emit('order_deleted', payload);
 		return;
+	}
+
+	if (action === 'table_released') {
+		io.emit('mesa_actualizada', payload);
+		io.emit('mesa_liberada', payload);
 	}
 
 	io.emit('order_updated', order);
@@ -224,6 +312,15 @@ function computeOrderTotal(items) {
 	return items.reduce((sum, item) => sum + Number(item.price || 0), 0);
 }
 
+function roundCurrency(value) {
+	return Number(Number(value || 0).toFixed(2));
+}
+
+function parseCurrency(value) {
+	const parsed = parseFloat(value);
+	return Number.isFinite(parsed) ? roundCurrency(parsed) : NaN;
+}
+
 function normalizeOrderItem(item) {
 	const normalizedNote =
 		(typeof item.note === 'string' && item.note.trim()) ||
@@ -274,6 +371,12 @@ async function consolidatePendingOrderForTable(table) {
 		)
 	);
 	const mergedTotal = computeOrderTotal(mergedItems);
+	const mergedMontoPagado = pendingOrders.reduce((sum, order) => sum + Number(order.montoPagado || 0), 0);
+	const mergedHistorialPagos = pendingOrders.flatMap((order) =>
+		(order.historialPagos || []).map((payment) =>
+			typeof payment?.toObject === 'function' ? payment.toObject() : payment
+		)
+	);
 	const duplicateIds = pendingOrders.slice(1).map((order) => order._id);
 
 	const updatedPrimaryOrder = await Order.findOneAndUpdate(
@@ -282,6 +385,8 @@ async function consolidatePendingOrderForTable(table) {
 			$set: {
 				items: mergedItems,
 				total: mergedTotal,
+				montoPagado: mergedMontoPagado,
+				historialPagos: mergedHistorialPagos,
 			},
 		},
 		{
@@ -311,7 +416,15 @@ const orderSchema = new mongoose.Schema(
 			},
 		],
 		total: { type: Number, required: true, min: 0 },
-		status: { type: String, default: 'pendiente', trim: true },
+		montoPagado: { type: Number, default: 0, min: 0 },
+		historialPagos: [
+			{
+				monto: { type: Number, required: true, min: 0 },
+				metodo: { type: String, required: true, trim: true },
+				fecha: { type: Date, required: true, default: Date.now },
+			},
+		],
+		status: { type: String, default: ORDER_STATUS.PENDING, trim: true },
 		hora_pago: { type: Date, default: null },
 		mesa_liberada: { type: Boolean, default: false },
 	},
@@ -342,13 +455,16 @@ function buildPaidOrdersHistoryPipeline() {
 	return [
 		{
 			$match: {
-				status: 'pagado',
+				historialPagos: { $exists: true, $ne: [] },
 			},
+		},
+		{
+			$unwind: '$historialPagos',
 		},
 		{
 			$addFields: {
 				reportDateSource: {
-					$ifNull: ['$hora_pago', '$updatedAt'],
+					$ifNull: ['$historialPagos.fecha', '$updatedAt'],
 				},
 			},
 		},
@@ -370,11 +486,11 @@ function buildPaidOrdersHistoryPipeline() {
 									timezone: HISTORY_TIMEZONE,
 								},
 							},
-							paidOrdersCount: {
+							transactionsCount: {
 								$sum: 1,
 							},
 							totalRevenue: {
-								$sum: '$total',
+								$sum: '$historialPagos.monto',
 							},
 							latestPaidAt: {
 								$max: '$reportDateSource',
@@ -390,21 +506,32 @@ function buildPaidOrdersHistoryPipeline() {
 						$project: {
 							_id: 0,
 							reportDate: '$_id',
-							paidOrdersCount: 1,
+							transactionsCount: 1,
 							totalRevenue: {
 								$round: ['$totalRevenue', 2],
 							},
 						},
 					},
 				],
-				orders: [
+				transactions: [
 					{
 						$project: {
+							transactionId: '$historialPagos._id',
 							_id: 1,
 							table: 1,
 							cliente_nombre: 1,
 							status: 1,
 							hora_pago: '$reportDateSource',
+							paymentMethod: '$historialPagos.metodo',
+							paymentAmount: {
+								$round: [{ $toDouble: '$historialPagos.monto' }, 2],
+							},
+							montoPagado: {
+								$round: [{ $toDouble: '$montoPagado' }, 2],
+							},
+							remainingAmount: {
+								$round: [{ $subtract: ['$total', '$montoPagado'] }, 2],
+							},
 							reportDate: {
 								$dateToString: {
 									format: '%Y-%m-%d',
@@ -480,15 +607,18 @@ app.get('/api/menu', (req, res) => {
 
 app.get('/api/tables/status', async (req, res) => {
 	try {
-		await Promise.all(TABLES.map((table) => consolidatePendingOrderForTable(table)));
+		await Promise.all(
+			TABLES.map(async (table) => {
+				await repairReleasedPaidOrdersForTable(table);
+				await consolidatePendingOrderForTable(table);
+			})
+		);
 
-		const activeOrders = await Order.find({
-			table: { $in: TABLES },
-			$or: [
-				{ status: { $ne: 'pagado' } },
-				{ status: 'pagado', mesa_liberada: { $ne: true } },
-			],
-		}).sort({ createdAt: -1 });
+		const activeOrders = await Order.find(
+			buildActiveOrdersFilter({
+				table: { $in: TABLES },
+			})
+		).sort({ createdAt: -1 });
 
 		const orderByTable = new Map();
 
@@ -510,7 +640,7 @@ app.get('/api/tables/status', async (req, res) => {
 				cliente_nombre: activeOrder?.cliente_nombre || '',
 				occupied: Boolean(activeOrder),
 				orderId: activeOrder?._id || null,
-				status: activeOrder?.status || 'disponible',
+				status: getVisibleTableStatus(activeOrder),
 			};
 		});
 
@@ -531,22 +661,22 @@ app.get('/api/orders/history', async (_req, res) => {
 	try {
 		const [history] = await Order.aggregate(buildPaidOrdersHistoryPipeline());
 		const summaryByDay = history?.summaryByDay || [];
-		const orders = history?.orders || [];
+		const transactions = history?.transactions || [];
 		const todayKey = getHistoryDateKey(new Date());
 		const daySummary =
 			summaryByDay.find((summary) => summary.reportDate === todayKey) || {
 				reportDate: todayKey,
-				paidOrdersCount: 0,
+				transactionsCount: 0,
 				totalRevenue: 0,
 			};
 
 		return res.json({
 			ok: true,
 			timezone: HISTORY_TIMEZONE,
-			totalPaidOrders: orders.length,
+			totalTransactions: transactions.length,
 			daySummary,
 			summaryByDay,
-			orders,
+			transactions,
 		});
 	} catch (error) {
 		return res.status(500).json({
@@ -583,17 +713,17 @@ app.get('/api/orders/:id', async (req, res) => {
 
 app.get('/api/orders/active/table/:table', async (req, res) => {
 	try {
+		await repairReleasedPaidOrdersForTable(req.params.table);
+
 		const consolidatedPendingOrder = await consolidatePendingOrderForTable(req.params.table);
 
 		const order =
 			consolidatedPendingOrder ||
-			(await Order.findOne({
-			table: req.params.table,
-			$or: [
-				{ status: { $ne: 'pagado' } },
-				{ status: 'pagado', mesa_liberada: { $ne: true } },
-			],
-		}).sort({ createdAt: -1 }));
+			(await Order.findOne(
+				buildActiveOrdersFilter({
+					table: req.params.table,
+				})
+			).sort({ createdAt: -1 }));
 
 		if (!order) {
 			return res.status(404).json({
@@ -616,9 +746,14 @@ app.get('/api/orders/active/table/:table', async (req, res) => {
 });
 
 app.post('/api/orders', async (req, res) => {
-	const { table, items, status, cliente_nombre, seccion } = req.body;
+	const { table, tableId, items, cliente_nombre, seccion } = req.body ?? {};
+	const normalizedTable = typeof tableId === 'string' && tableId.trim()
+		? tableId.trim()
+		: typeof table === 'string'
+			? table.trim()
+			: '';
 
-	if (!table || !Array.isArray(items) || items.length === 0) {
+	if (!normalizedTable || !Array.isArray(items) || items.length === 0) {
 		return res.status(400).json({
 			ok: false,
 			message: 'La mesa y los items son obligatorios.',
@@ -626,7 +761,7 @@ app.post('/api/orders', async (req, res) => {
 	}
 
 	try {
-		const tableDefinition = getTableDefinition(table);
+		const tableDefinition = getTableDefinition(normalizedTable);
 
 		if (!tableDefinition) {
 			return res.status(400).json({
@@ -639,7 +774,10 @@ app.post('/api/orders', async (req, res) => {
 		const normalizedSection = tableDefinition.section || seccion || 'Sala';
 		const normalizedItems = items.map(normalizeOrderItem);
 		const itemsTotal = computeOrderTotal(normalizedItems);
-		const pendingOrder = await consolidatePendingOrderForTable(table);
+
+		await repairReleasedPaidOrdersForTable(normalizedTable);
+
+		const pendingOrder = await consolidatePendingOrderForTable(normalizedTable);
 
 		if (pendingOrder) {
 			const updatedOrder = await Order.findOneAndUpdate(
@@ -657,11 +795,17 @@ app.post('/api/orders', async (req, res) => {
 							$set: {
 								cliente_nombre: pendingOrder.cliente_nombre || normalizedClientName,
 								seccion: normalizedSection,
+								status: ORDER_STATUS.PENDING,
+								hora_pago: null,
+								mesa_liberada: false,
 							},
 						}
 						: {
 							$set: {
 								seccion: normalizedSection,
+								status: ORDER_STATUS.PENDING,
+								hora_pago: null,
+								mesa_liberada: false,
 							},
 						}),
 					$inc: {
@@ -683,13 +827,11 @@ app.post('/api/orders', async (req, res) => {
 			});
 		}
 
-		const existingActiveOrder = await Order.findOne({
-			table,
-			$or: [
-				{ status: { $ne: 'pagado' } },
-				{ status: 'pagado', mesa_liberada: { $ne: true } },
-			],
-		}).sort({ createdAt: -1 });
+		const existingActiveOrder = await Order.findOne(
+			buildActiveOrdersFilter({
+				table: normalizedTable,
+			})
+		).sort({ createdAt: -1 });
 
 		if (existingActiveOrder) {
 			return res.status(400).json({
@@ -700,12 +842,16 @@ app.post('/api/orders', async (req, res) => {
 		}
 
 		const order = await Order.create({
-			table,
+			table: normalizedTable,
 			cliente_nombre: normalizedClientName,
 			seccion: normalizedSection,
 			items: normalizedItems,
 			total: itemsTotal,
-			status: status || 'pendiente',
+			montoPagado: 0,
+			historialPagos: [],
+			status: ORDER_STATUS.PENDING,
+			hora_pago: null,
+			mesa_liberada: false,
 		});
 
 		emitOrderRealtime('created', order);
@@ -753,7 +899,7 @@ app.patch('/api/orders/:id/modify', async (req, res) => {
 		}
 
 		if (action === 'add') {
-			if (order.status === 'pagado') {
+			if (isOrderLocked(order)) {
 				throw new Error('No se pueden agregar items a una orden pagada.');
 			}
 
@@ -837,7 +983,7 @@ app.patch('/api/orders/:id/update-items', async (req, res) => {
 			});
 		}
 
-		if (order.status === 'pagado') {
+		if (isOrderLocked(order)) {
 			throw new Error('No se puede modificar una orden pagada.');
 		}
 
@@ -899,7 +1045,7 @@ app.patch('/api/orders/:id/sync', async (req, res) => {
 			});
 		}
 
-		if (order.status === 'pagado') {
+		if (isOrderLocked(order)) {
 			return res.status(400).json({
 				ok: false,
 				message: 'No se puede sincronizar una orden pagada.',
@@ -914,7 +1060,7 @@ app.patch('/api/orders/:id/sync', async (req, res) => {
 				$set: {
 					items: normalizedItems,
 					total: newTotal,
-					status: 'pendiente',
+					status: ORDER_STATUS.PENDING,
 				},
 			},
 			{
@@ -940,7 +1086,7 @@ app.patch('/api/orders/:id/sync', async (req, res) => {
 
 app.patch('/api/orders/:id/pay', async (req, res) => {
 	const { id } = req.params;
-	const { items } = req.body ?? {};
+	const { items, montoRecibido, metodo = 'efectivo', estado = 'completado' } = req.body ?? {};
 
 	try {
 		const order = await Order.findById(id);
@@ -952,10 +1098,10 @@ app.patch('/api/orders/:id/pay', async (req, res) => {
 			});
 		}
 
-		if (order.status === 'pagado') {
+		if (getVisibleTableStatus(order) === ORDER_STATUS.CLEANING || order.mesa_liberada === true) {
 			return res.status(400).json({
 				ok: false,
-				message: 'La orden ya fue pagada.',
+				message: 'La orden ya fue cerrada y enviada a limpieza.',
 			});
 		}
 
@@ -970,24 +1116,162 @@ app.patch('/api/orders/:id/pay', async (req, res) => {
 			order.items = items.map(normalizeOrderItem);
 		}
 
+		const normalizedState = typeof estado === 'string' ? estado.trim().toLowerCase() : 'completado';
+		if (!['completado', 'fallido'].includes(normalizedState)) {
+			return res.status(400).json({
+				ok: false,
+				message: 'El estado del pago debe ser completado o fallido.',
+			});
+		}
+
+		const parsedAmount = Number(montoRecibido);
+		if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+			return res.status(400).json({
+				ok: false,
+				message: 'Debes enviar un monto recibido valido mayor a cero.',
+			});
+		}
+
 		order.seccion = order.seccion || getTableDefinition(order.table)?.section || 'Sala';
-		order.total = computeOrderTotal(order.items ?? []);
-		order.status = 'pagado';
-		order.hora_pago = new Date();
-		order.mesa_liberada = false;
+		order.total = roundCurrency(Number(computeOrderTotal(order.items ?? [])));
+
+		const currentPaidAmount = roundCurrency(Number(order.montoPagado || 0));
+		const saldoPendiente = roundCurrency(order.total - currentPaidAmount);
+		const normalizedAmount = roundCurrency(Number(parsedAmount));
+
+		console.log(`Saldo Pendiente: ${saldoPendiente.toFixed(2)}`);
+
+		if (normalizedAmount > saldoPendiente) {
+			return res.status(400).json({
+				ok: false,
+				message: `El monto ingresado excede el saldo pendiente ($${saldoPendiente.toFixed(2)}). Por favor, ingrese el monto exacto o una parte menor`,
+				order,
+				remainingAmount: saldoPendiente,
+			});
+		}
+
+		const nextPaidAmount = normalizedState === 'completado' ? roundCurrency(Number(currentPaidAmount + normalizedAmount)) : currentPaidAmount;
+		const remainingAmount = Math.max(0, roundCurrency(order.total - nextPaidAmount));
+
+		if (normalizedState === 'completado') {
+			order.montoPagado = nextPaidAmount;
+			order.historialPagos = [
+				...(order.historialPagos || []),
+				{
+					monto: normalizedAmount,
+					metodo: String(metodo || 'efectivo').trim() || 'efectivo',
+					fecha: new Date(),
+				},
+			];
+		}
+
+		console.log(`Nuevo Total Pagado: ${Number(order.montoPagado || 0).toFixed(2)}`);
+
+		if (normalizedState === 'fallido') {
+			return res.status(400).json({
+				ok: false,
+				message: 'El pago fue marcado como fallido y no se aplico ningun abono.',
+				order,
+				remainingAmount: Math.max(0, roundCurrency(order.total - Number(order.montoPagado || 0))),
+			});
+		}
+
+		if (order.montoPagado === order.total) {
+			order.status = ORDER_STATUS.PAID;
+			order.hora_pago = new Date();
+			order.mesa_liberada = false;
+			console.log(`Mesa actualizada a limpieza: ${order.table}`);
+		} else {
+			order.status = ORDER_STATUS.PENDING;
+			order.hora_pago = null;
+			order.mesa_liberada = false;
+		}
+
+		console.log(`Estado Final Mesa: ${getVisibleTableStatus(order)}`);
+
 		await order.save();
 
-		emitOrderRealtime('paid', order);
+		emitOrderRealtime(order.status === ORDER_STATUS.PAID ? 'paid' : 'partial_payment', order);
 
 		return res.json({
 			ok: true,
-			message: `${order.table} cobrada. Pendiente liberacion manual en mesonero.`,
+			message:
+				order.status === ORDER_STATUS.PAID
+					? `${order.table} pagada por completo. Mesa enviada a limpieza.`
+					: `${order.table} abono registrado. Restante: ${remainingAmount.toFixed(2)}.`,
+			montoPagado: Number(order.montoPagado || 0),
+			remainingAmount,
 			order,
 		});
 	} catch (error) {
 		return res.status(400).json({
 			ok: false,
 			message: error.message || 'No se pudo procesar el pago.',
+		});
+	}
+});
+
+async function releaseTableByOrder(orderId) {
+	return Order.findByIdAndUpdate(
+		orderId,
+		{
+			$set: {
+				status: ORDER_STATUS.PAID,
+				mesa_liberada: true,
+			},
+		},
+		{
+			new: true,
+			runValidators: true,
+		}
+	);
+}
+
+app.patch('/api/tables/:id/liberar', async (req, res) => {
+	const tableId = req.params.id;
+
+	try {
+		const order = await Order.findOne(
+			buildActiveOrdersFilter({
+				table: tableId,
+			})
+		).sort({ createdAt: -1 });
+
+		if (!order) {
+			return res.status(404).json({
+				ok: false,
+				message: 'La mesa no tiene una orden pendiente de liberar.',
+			});
+		}
+
+		if (getVisibleTableStatus(order) !== ORDER_STATUS.CLEANING) {
+			return res.status(400).json({
+				ok: false,
+				message: 'Solo puedes liberar mesas que esten en limpieza.',
+			});
+		}
+
+		if (order.mesa_liberada === true) {
+			return res.status(400).json({
+				ok: false,
+				message: 'La mesa ya se encuentra liberada.',
+			});
+		}
+
+
+		const releasedOrder = await releaseTableByOrder(order._id);
+
+		emitOrderRealtime('table_released', releasedOrder);
+
+		return res.json({
+			ok: true,
+			message: `${releasedOrder.table} marcada como libre nuevamente.`,
+			order: releasedOrder,
+		});
+	} catch (error) {
+		return res.status(400).json({
+			ok: false,
+			message: error.message || 'No se pudo liberar la mesa.',
 		});
 	}
 });
@@ -1005,10 +1289,10 @@ app.patch('/api/orders/:id/release-table', async (req, res) => {
 			});
 		}
 
-		if (order.status !== 'pagado') {
+		if (getVisibleTableStatus(order) !== ORDER_STATUS.CLEANING) {
 			return res.status(400).json({
 				ok: false,
-				message: 'Solo puedes liberar mesas de ordenes pagadas.',
+				message: 'Solo puedes liberar mesas que esten en limpieza.',
 			});
 		}
 
@@ -1019,15 +1303,15 @@ app.patch('/api/orders/:id/release-table', async (req, res) => {
 			});
 		}
 
-		order.mesa_liberada = true;
-		await order.save();
 
-		emitOrderRealtime('table_released', order);
+		const releasedOrder = await releaseTableByOrder(order._id);
+
+		emitOrderRealtime('table_released', releasedOrder);
 
 		return res.json({
 			ok: true,
-			message: `${order.table} liberada manualmente.`,
-			order,
+			message: `${releasedOrder.table} marcada como libre nuevamente.`,
+			order: releasedOrder,
 		});
 	} catch (error) {
 		return res.status(400).json({

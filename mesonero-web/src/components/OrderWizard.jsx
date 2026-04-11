@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { API_BASE_URL } from '../config/api'
-import { createRestoSocket } from '../lib/socket'
+import { useRestoRealtime } from '../hooks/use-resto-realtime'
 
 const menu = {
   Bebidas: [
@@ -38,6 +38,10 @@ function normalizeOrder(order) {
     status: order.status ?? 'pendiente',
     hora_pago: order.hora_pago ?? null,
   }
+}
+
+function isOrderLocked(status) {
+  return status === 'limpieza' || status === 'pagado'
 }
 
 function groupItems(items) {
@@ -102,7 +106,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
     [currentOrder.items],
   )
   const canRemoveItems = !currentOrder._id || currentOrder.status === 'pendiente'
-  const canEditActiveOrder = currentOrder._id && currentOrder.status !== 'pagado'
+  const canEditActiveOrder = currentOrder._id && !isOrderLocked(currentOrder.status)
   const groupedEditableItems = useMemo(() => groupItems(editableItems), [editableItems])
 
   const fetchTableStatuses = useCallback(async (showLoader = false) => {
@@ -179,43 +183,34 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
     }
   }, [currentOrder._id, syncCurrentOrder])
 
-  useEffect(() => {
-    const socket = createRestoSocket()
-
-    const handleSocketConnect = () => {
-      setIsCajaConnected(true)
+  const handleRemoteRelease = useCallback((payload) => {
+    if (!payload?.table || payload.table !== currentOrder.table) {
+      return
     }
 
-    const handleSocketDisconnect = () => {
-      setIsCajaConnected(false)
-    }
+    setStep(1)
+    setSelectedMenuItem(null)
+    setSelectedNote('Sin hielo')
+    setSelectedCategory('Bebidas')
+    setEditableItems([])
+    setIsDirty(false)
+  }, [currentOrder.table])
 
-    const handleRealtimeOrder = async (payload) => {
-      await fetchTableStatuses(false)
-      await syncCurrentOrder()
-
-      if (payload?.table) {
-        setFeedbackType(payload.action === 'paid' ? 'success' : 'default')
-        setFeedback(`Actualizacion en tiempo real: ${payload.table}`)
-      }
-    }
-
-    socket.on('orden_actualizada', handleRealtimeOrder)
-    socket.on('connect', handleSocketConnect)
-    socket.on('disconnect', handleSocketDisconnect)
-
-    if (socket.connected) {
-      setIsCajaConnected(true)
-    }
-
-    return () => {
-      socket.off('orden_actualizada', handleRealtimeOrder)
-      socket.off('connect', handleSocketConnect)
-      socket.off('disconnect', handleSocketDisconnect)
-      socket.disconnect()
-      setIsCajaConnected(false)
-    }
-  }, [fetchTableStatuses, syncCurrentOrder])
+  useRestoRealtime({
+    fetchTableStatuses,
+    syncCurrentOrder,
+    setTableStatuses,
+    setCurrentOrder,
+    setEditableItems,
+    setFeedback,
+    setFeedbackType,
+    setIsCajaConnected,
+    currentOrder,
+    isDirty,
+    initialOrder,
+    onRemoteRelease: handleRemoteRelease,
+    normalizeOrder,
+  })
 
   function updateOrder(items, table = currentOrder.table) {
     const total = items.reduce((sum, item) => sum + item.price, 0)
@@ -243,8 +238,8 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
         setEditableItems(normalized.items)
         setIsDirty(false)
         setStep(2)
-        if (normalized.status === 'pagado') {
-          setFeedback(`${table} esta pagada y pendiente de liberar. Usa "Poner mesa libre" para cerrar la mesa.`)
+        if (normalized.status === 'limpieza') {
+          setFeedback(`${table} esta en limpieza. Usa "Mesa limpia / liberar mesa" cuando quede disponible.`)
         } else {
           setFeedback(`${table} ya tiene un pedido activo.`)
         }
@@ -395,12 +390,19 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
     setFeedback('')
 
     try {
+      const payload = {
+        tableId: currentOrder.table,
+        cliente_nombre: currentOrder.cliente_nombre,
+        seccion: currentOrder.seccion,
+        items: currentOrder.items,
+      }
+
       const response = await fetch(`${API_BASE_URL}/api/orders`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(currentOrder),
+        body: JSON.stringify(payload),
       })
 
       const data = await parseJsonResponse(response)
@@ -431,21 +433,20 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
   }
 
   async function handleReleaseTable() {
-    if (!currentOrder._id || currentOrder.status !== 'pagado') {
+    if (!currentOrder.table || currentOrder.status !== 'limpieza') {
       return
     }
 
-    const orderId = currentOrder._id
     const tableToRelease = currentOrder.table
 
-    if (!window.confirm(`Vas a marcar ${tableToRelease} como mesa libre.`)) {
+    if (!window.confirm(`Vas a marcar ${tableToRelease} como lista para nuevos clientes.`)) {
       return
     }
 
     setIsReleasingTable(true)
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/orders/${orderId}/release-table`, {
+      const response = await fetch(`${API_BASE_URL}/api/tables/${encodeURIComponent(tableToRelease)}/liberar`, {
         method: 'PATCH',
       })
 
@@ -475,7 +476,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
       setSelectedCategory('Bebidas')
 
       setFeedbackType('success')
-      setFeedback(`${tableToRelease} fue liberada manualmente.`)
+      setFeedback(`${tableToRelease} fue marcada como libre.`)
 
       void fetchTableStatuses(false)
     } catch (error) {
@@ -540,7 +541,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
                     Selecciona la mesa
                   </h2>
                   <p className="mt-1 text-sm text-slate-300">
-                    Las mesas ocupadas aparecen en naranja y abren su pedido activo.
+                    Las ocupadas aparecen en naranja y las mesas en limpieza resaltan en azul.
                   </p>
                 </div>
               </div>
@@ -556,7 +557,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
                   const selected = currentOrder.table === table
                   const tableStatus = tableStatuses.find((item) => item.table === table)
                   const occupied = Boolean(tableStatus?.occupied)
-                  const isPaidPendingRelease = tableStatus?.status === 'pagado'
+                  const isCleaning = tableStatus?.status === 'limpieza'
 
                   return (
                     <button
@@ -564,8 +565,10 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
                       type="button"
                       onClick={() => handleTableSelect(table)}
                       className={`min-h-[132px] rounded-3xl border p-5 text-left transition duration-200 ${
-                        occupied
-                          ? 'border-sunsetOrange bg-sunsetOrange text-deepCarbon shadow-glow'
+                        isCleaning
+                          ? 'border-[#3B82F6] bg-[#3B82F6] text-snowText shadow-glow'
+                          : occupied
+                            ? 'border-sunsetOrange bg-sunsetOrange text-deepCarbon shadow-glow'
                           : selected
                             ? 'border-sunset bg-carbon text-snowText shadow-glow'
                             : 'border-carbonLine bg-carbonCard text-snowText hover:border-sunset/60 hover:bg-carbon'
@@ -573,21 +576,21 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
                     >
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-xs font-semibold uppercase tracking-[0.35em] text-inherit/70">
-                          {occupied ? (isPaidPendingRelease ? 'Pagada' : 'Ocupada') : 'Disponible'}
+                          {isCleaning ? 'Limpieza' : occupied ? 'Ocupada' : 'Disponible'}
                         </span>
                         {occupied ? (
                           <span className="text-lg font-semibold">
-                            {isPaidPendingRelease ? 'Pendiente liberar' : 'Cliente'}
+                            {isCleaning ? 'Lista para liberar' : 'Cliente'}
                           </span>
                         ) : null}
                       </div>
                       <p className="mt-3 font-display text-2xl font-semibold">{table}</p>
                       <p className="mt-2 text-sm text-inherit/80">
-                        {occupied
-                          ? isPaidPendingRelease
-                            ? 'Cuenta pagada. Se mantiene bloqueada hasta que la liberes manualmente.'
-                            : 'Abrir pedido activo y seguir modificando.'
-                          : 'Preparada para iniciar una nueva orden.'}
+                        {isCleaning
+                          ? 'Cuenta cobrada. Esperando confirmacion de limpieza para volver a estar libre.'
+                          : occupied
+                            ? 'Abrir pedido activo y seguir modificando.'
+                            : 'Preparada para iniciar una nueva orden.'}
                       </p>
                     </button>
                   )
@@ -769,14 +772,14 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
         </div>
 
         <div className="mt-5 space-y-3">
-          {currentOrder._id && currentOrder.status === 'pagado' ? (
+          {currentOrder._id && currentOrder.status === 'limpieza' ? (
             <button
               type="button"
               onClick={handleReleaseTable}
               disabled={isReleasingTable}
-              className="w-full rounded-2xl bg-emerald-500 px-4 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-snowText transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-carbonLine disabled:text-slate-400"
+              className="w-full rounded-2xl bg-[#3B82F6] px-4 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-snowText transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-carbonLine disabled:text-slate-400"
             >
-              {isReleasingTable ? 'Liberando mesa...' : 'Poner mesa libre'}
+              {isReleasingTable ? 'Liberando mesa...' : 'Mesa limpia / liberar mesa'}
             </button>
           ) : null}
 
@@ -889,7 +892,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
                         <button
                           type="button"
                           onClick={() => {
-                            if (currentOrder.status === 'pagado') {
+                            if (isOrderLocked(currentOrder.status)) {
                               setFeedback('No puedes agregar items a una orden pagada.')
                               return
                             }
@@ -904,7 +907,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
                             ])
                             setIsDirty(true)
                           }}
-                          disabled={currentOrder.status === 'pagado'}
+                          disabled={isOrderLocked(currentOrder.status)}
                           className="flex h-10 w-10 items-center justify-center rounded-xl border border-carbonLine bg-sunset text-lg font-bold text-black disabled:cursor-not-allowed disabled:bg-carbonLine disabled:text-slate-500"
                         >
                           +
@@ -954,7 +957,11 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
           <div className="flex items-center justify-between text-sm text-slate-300">
             <span>Status</span>
             <span className={`rounded-full px-3 py-1 font-semibold ${
-              currentOrder.status === 'pagado' ? 'bg-emerald-500 text-snowText' : 'bg-sunset text-black'
+              currentOrder.status === 'limpieza'
+                ? 'bg-[#3B82F6] text-snowText'
+                : currentOrder.status === 'pagado'
+                  ? 'bg-emerald-500 text-snowText'
+                  : 'bg-sunset text-black'
             }`}>
               {currentOrder.status}
             </span>

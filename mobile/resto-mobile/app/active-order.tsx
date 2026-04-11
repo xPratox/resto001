@@ -23,7 +23,8 @@ type ActiveOrder = {
   table: string;
   items: OrderItem[];
   total: number;
-  status: 'pendiente' | 'en cocina' | 'pagado';
+  montoPagado?: number;
+  status: 'pendiente' | 'en cocina' | 'limpieza' | 'pagado';
   hora_pago?: string | null;
 };
 
@@ -63,6 +64,7 @@ function normalizeOrder(order: ActiveOrder): ActiveOrder {
       observaciones: item.observaciones,
     })),
     total: Number(order.total ?? 0),
+    montoPagado: Number(order.montoPagado ?? 0),
     status: order.status ?? 'pendiente',
   };
 }
@@ -111,7 +113,7 @@ export default function ActiveOrderScreen() {
     return tempOrderItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
   }, [tempOrderItems]);
 
-  const canEditOrder = order?.status !== 'pagado';
+  const canEditOrder = order?.status !== 'pagado' && order?.status !== 'limpieza';
 
   const setEditingState = useCallback((value: boolean) => {
     hasLocalEditsRef.current = value;
@@ -321,11 +323,14 @@ export default function ActiveOrderScreen() {
               `${API_BASE_URL}/api/orders/${order._id}/pay`,
               {
                 items: tempOrderItems,
+                metodo: 'efectivo',
+                estado: 'completado',
+                montoRecibido: Math.max(0, Number((order.total - Number(order.montoPagado || 0)).toFixed(2))),
               },
             );
 
             const paidOrder = normalizeOrder(response.data.order);
-            const successCopy = '¡Mesa liberada con éxito!';
+            const successCopy = '¡Mesa enviada a limpieza!';
 
             setOrder(paidOrder);
             setTempOrderItems(paidOrder.items);
@@ -520,7 +525,7 @@ export default function ActiveOrderScreen() {
               onPress={handlePayment}
               disabled={!order || !tempOrderItems.length || isUpdating}
               style={[styles.payButton, (!order || !tempOrderItems.length || isUpdating) && styles.disabledButton]}>
-              <Text style={styles.payButtonText}>{isUpdating ? 'Procesando...' : 'Cobrar y Liberar Mesa'}</Text>
+              <Text style={styles.payButtonText}>{isUpdating ? 'Procesando...' : 'Cobrar y Enviar a Limpieza'}</Text>
             </Pressable>
 
             <Pressable

@@ -21,6 +21,7 @@ export const RestoBrandTheme = {
   },
   status: {
     success: '#10B981',
+    cleaning: '#3B82F6',
     error: '#EF4444',
   },
   border: {

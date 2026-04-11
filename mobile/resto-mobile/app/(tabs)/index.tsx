@@ -1,6 +1,6 @@
 import axios, { isAxiosError } from 'axios';
 import { FontAwesome5 } from '@expo/vector-icons';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
@@ -40,7 +40,7 @@ type CurrentOrder = {
   seccion: 'Sala' | 'Terraza';
   items: OrderItem[];
   total: number;
-  status: 'pendiente' | 'en cocina' | 'pagado';
+  status: 'pendiente' | 'en cocina' | 'limpieza' | 'pagado';
 };
 
 type TableDefinition = {
@@ -58,7 +58,7 @@ type TableStatus = {
   cliente_nombre?: string;
   occupied: boolean;
   orderId: string | null;
-  status: 'disponible' | 'pendiente' | 'en cocina' | 'pagado';
+  status: 'disponible' | 'pendiente' | 'en cocina' | 'limpieza' | 'pagado';
 };
 
 type BackendMenuItem = Partial<MenuItem> & {
@@ -152,11 +152,13 @@ function normalizeTableStatus(table: BackendTableStatus): TableStatus | null {
     table.status === 'disponible' ||
     table.status === 'pendiente' ||
     table.status === 'en cocina' ||
+    table.status === 'limpieza' ||
     table.status === 'pagado'
       ? table.status
       : table.estado === 'disponible' ||
           table.estado === 'pendiente' ||
           table.estado === 'en cocina' ||
+          table.estado === 'limpieza' ||
           table.estado === 'pagado'
         ? table.estado
         : 'disponible';
@@ -224,6 +226,61 @@ export default function HomeScreen() {
   const [isReservationModalVisible, setIsReservationModalVisible] = useState(false);
   const [reservationName, setReservationName] = useState('');
   const [pendingTableSelection, setPendingTableSelection] = useState<TableDefinition | null>(null);
+  const [selectedCleaningTable, setSelectedCleaningTable] = useState<TableStatus | null>(null);
+  const [isCleaningModalVisible, setIsCleaningModalVisible] = useState(false);
+  const [isReleasingCleaningTable, setIsReleasingCleaningTable] = useState(false);
+  const releaseGuardTablesRef = useRef<Set<string>>(new Set());
+
+  const lockTableAsAvailable = useCallback((tables: TableStatus[], tableName: string) => {
+    return tables.map((table) =>
+      table.table === tableName
+        ? {
+            ...table,
+            occupied: false,
+            orderId: null,
+            cliente_nombre: '',
+            status: 'disponible',
+          }
+        : table,
+    );
+  }, []);
+
+  const commitIncomingTableStatuses = useCallback(
+    (incomingTables: TableStatus[]) => {
+      setTableStatuses((previousTables) =>
+        incomingTables.map((table) => {
+          if (!releaseGuardTablesRef.current.has(table.table)) {
+            return table;
+          }
+
+          if (table.status === 'limpieza') {
+            const previousTable = previousTables.find((item) => item.table === table.table);
+
+            return previousTable
+              ? {
+                  ...table,
+                  ...previousTable,
+                  occupied: false,
+                  orderId: null,
+                  cliente_nombre: '',
+                  status: 'disponible',
+                }
+              : {
+                  ...table,
+                  occupied: false,
+                  orderId: null,
+                  cliente_nombre: '',
+                  status: 'disponible',
+                };
+          }
+
+          releaseGuardTablesRef.current.delete(table.table);
+          return table;
+        }),
+      );
+    },
+    [],
+  );
 
   const groupedMenuItems = useMemo(() => {
     return menuItems.reduce<Record<string, MenuItem[]>>((groups, item) => {
@@ -295,7 +352,7 @@ export default function HomeScreen() {
             .filter((table): table is TableStatus => table !== null)
         : [];
 
-      setTableStatuses(normalizedTables);
+      commitIncomingTableStatuses(normalizedTables);
     } catch (error) {
       const message = isAxiosError(error) ? error.response?.data?.message || error.message : 'Error desconocido cargando mesas';
 
@@ -311,7 +368,7 @@ export default function HomeScreen() {
         setIsLoadingTables(false);
       }
     }
-  }, []);
+  }, [commitIncomingTableStatuses]);
 
   useEffect(() => {
     void fetchMenu();
@@ -337,10 +394,34 @@ export default function HomeScreen() {
       void fetchTableStatuses(false);
     };
 
+    const handleTableReleased = () => {
+      void fetchTableStatuses(false);
+    };
+
+    const handleTableOccupied = () => {
+      void fetchTableStatuses(false);
+    };
+
+    const handleTableCleaning = () => {
+      void fetchTableStatuses(false);
+    };
+
+    const handleTableUpdated = () => {
+      void fetchTableStatuses(false);
+    };
+
     restoSocket.on('orden_actualizada', handleOrderUpdated);
+    restoSocket.on('mesa_liberada', handleTableReleased);
+    restoSocket.on('mesa_ocupada', handleTableOccupied);
+    restoSocket.on('mesa_en_limpieza', handleTableCleaning);
+    restoSocket.on('mesa_actualizada', handleTableUpdated);
 
     return () => {
       restoSocket.off('orden_actualizada', handleOrderUpdated);
+      restoSocket.off('mesa_liberada', handleTableReleased);
+      restoSocket.off('mesa_ocupada', handleTableOccupied);
+      restoSocket.off('mesa_en_limpieza', handleTableCleaning);
+      restoSocket.off('mesa_actualizada', handleTableUpdated);
     };
   }, [fetchTableStatuses]);
 
@@ -372,7 +453,21 @@ export default function HomeScreen() {
   );
   const totalItems = useMemo(() => combinedOrderItems.length, [combinedOrderItems]);
   const canRemoveItems = !currentOrder._id || currentOrder.status === 'pendiente';
-  const canAddItemsToOrder = currentOrder.status !== 'pagado';
+  const canAddItemsToOrder = currentOrder.status !== 'pagado' && currentOrder.status !== 'limpieza';
+
+  useEffect(() => {
+    if (!selectedCleaningTable) {
+      setIsCleaningModalVisible(false);
+      return;
+    }
+
+    const nextSelectedCleaningTable = tableStatuses.find((item) => item.table === selectedCleaningTable.table && item.status === 'limpieza') || null;
+    setSelectedCleaningTable(nextSelectedCleaningTable);
+
+    if (!nextSelectedCleaningTable) {
+      setIsCleaningModalVisible(false);
+    }
+  }, [selectedCleaningTable, tableStatuses]);
 
   useEffect(() => {
     const incomingOrderId = params.orderId;
@@ -399,11 +494,24 @@ export default function HomeScreen() {
     syncIncomingOrder();
   }, [currentOrder._id, params.orderId, params.step]);
 
-  const handleTableSelect = async (tableDefinition: TableDefinition) => {
+  const handleCloseCleaningModal = useCallback(() => {
+    setIsCleaningModalVisible(false);
+    setSelectedCleaningTable(null);
+  }, []);
+
+  const handleTablePress = async (tableDefinition: TableDefinition) => {
     setSuccessMessage('');
     setErrorMessage('');
 
     const tableStatus = tableStatuses.find((item) => item.table === tableDefinition.table);
+
+    if (tableStatus?.status === 'limpieza') {
+      setSelectedCleaningTable(tableStatus);
+      setIsCleaningModalVisible(true);
+      return;
+    }
+
+    handleCloseCleaningModal();
 
     if (tableStatus?.occupied && tableStatus.orderId) {
       router.push({
@@ -433,11 +541,72 @@ export default function HomeScreen() {
       cliente_nombre: reservationName.trim(),
     });
     setPendingItemsToAdd([]);
+    setSelectedCleaningTable(null);
     setIsReservationModalVisible(false);
     setPendingTableSelection(null);
     setReservationName('');
     setStep(2);
   };
+
+  const handleReleaseCleaningTable = useCallback(async () => {
+    if (!selectedCleaningTable) {
+      return;
+    }
+
+    const tableName = selectedCleaningTable.table;
+
+    releaseGuardTablesRef.current.add(tableName);
+    setIsCleaningModalVisible(false);
+    setSelectedCleaningTable(null);
+    setTableStatuses((previousTables) => lockTableAsAvailable(previousTables, tableName));
+
+    try {
+      setIsReleasingCleaningTable(true);
+      setErrorMessage('');
+      setSuccessMessage(`${tableName} liberandose...`);
+
+      const response = await axios.patch<{ message: string }>(
+        `${API_BASE_URL}/api/tables/${encodeURIComponent(tableName)}/liberar`,
+      );
+
+      setSuccessMessage(response.data.message || `${tableName} quedo libre.`);
+      await fetchTableStatuses(false);
+    } catch (error) {
+      releaseGuardTablesRef.current.delete(tableName);
+      setTableStatuses((previousTables) =>
+        previousTables.map((table) =>
+          table.table === tableName
+            ? {
+                ...table,
+                occupied: true,
+                status: 'limpieza',
+              }
+            : table,
+        ),
+      );
+      const retryMessage = 'Error al liberar, reintentando...';
+
+      if (isAxiosError(error)) {
+        setErrorMessage(retryMessage);
+      } else {
+        setErrorMessage(retryMessage);
+      }
+
+      const revertedTable = tableStatuses.find((item) => item.table === tableName);
+      if (revertedTable) {
+        setSelectedCleaningTable({
+          ...revertedTable,
+          occupied: true,
+          status: 'limpieza',
+        });
+        setIsCleaningModalVisible(true);
+      }
+
+      await fetchTableStatuses(false);
+    } finally {
+      setIsReleasingCleaningTable(false);
+    }
+  }, [fetchTableStatuses, lockTableAsAvailable, selectedCleaningTable, tableStatuses]);
 
   const handleOpenNotes = (item: MenuItem) => {
     setErrorMessage('');
@@ -588,15 +757,12 @@ export default function HomeScreen() {
     setSuccessMessage('');
 
     try {
-      const payload = currentOrder._id
-        ? {
-            table: currentOrder.table,
-            cliente_nombre: currentOrder.cliente_nombre,
-            seccion: currentOrder.seccion,
-            items: pendingItemsToAdd,
-            status: 'pendiente' as const,
-          }
-        : currentOrder;
+    const payload = {
+      tableId: currentOrder.table,
+      cliente_nombre: currentOrder.cliente_nombre,
+      seccion: currentOrder.seccion,
+      items: currentOrder._id ? pendingItemsToAdd : currentOrder.items,
+    };
 
       const response = await axios.post<{ order: CurrentOrder }>(`${API_BASE_URL}/api/orders`, payload);
       const normalizedOrder = normalizeOrder(response.data.order);
@@ -727,35 +893,40 @@ export default function HomeScreen() {
               {tablesBySection.map((table) => {
                 const selected = currentOrder.table === table.table;
                 const occupied = Boolean(table.occupied);
+                const isCleaning = table.status === 'limpieza';
+                const statusLabel = isCleaning ? 'Limpieza' : occupied ? 'Ocupada' : 'Disponible';
 
                 return (
                   <Pressable
                     key={table.table}
-                    onPress={() => handleTableSelect(table)}
+                    onPress={() => handleTablePress(table)}
                     style={[
                       styles.giantButton,
                       table.highlighted && styles.giantButtonLarge,
-                      occupied && styles.giantButtonOccupied,
-                      selected && !occupied && styles.giantButtonSelected,
+                      isCleaning ? styles.giantButtonCleaning : occupied && styles.giantButtonOccupied,
+                      selected && !occupied && !isCleaning && styles.giantButtonSelected,
                     ]}>
                     <View style={styles.tableButtonHeader}>
-                      <Text style={[styles.tableStatusBadge, occupied && styles.tableStatusBadgeOccupied]}>
-                        {occupied ? 'Ocupada' : 'Disponible'}
+                      <Text style={[styles.tableStatusBadge, (occupied || isCleaning) && styles.tableStatusBadgeOccupied]}>
+                        {statusLabel}
                       </Text>
-                      {occupied ? <FontAwesome5 name="user-alt" size={16} color={brand.text.contrastOnAccent} /> : null}
+                      {occupied ? <FontAwesome5 name={isCleaning ? 'broom' : 'user-alt'} size={16} color={brand.text.contrastOnAccent} /> : null}
                     </View>
-                    <Text style={[styles.giantButtonLabel, occupied && styles.giantButtonLabelOccupied]}>
+                    <Text style={[styles.giantButtonLabel, (occupied || isCleaning) && styles.giantButtonLabelOccupied]}>
                       {table.table}
                     </Text>
-                    <Text style={[styles.giantButtonMeta, occupied && styles.giantButtonMetaOccupied]}>
-                      {occupied
-                        ? table.cliente_nombre || 'Cliente sin nombre'
+                    <Text style={[styles.giantButtonMeta, (occupied || isCleaning) && styles.giantButtonMetaOccupied]}>
+                      {isCleaning
+                        ? 'Cuenta cobrada. Esperando liberacion manual.'
+                        : occupied
+                          ? table.cliente_nombre || 'Cliente sin nombre'
                         : `${table.capacity} personas${table.highlighted ? ' · mesa destacada' : ''}`}
                     </Text>
                   </Pressable>
                 );
               })}
             </View>
+
           </View>
         ) : null}
 
@@ -894,6 +1065,37 @@ export default function HomeScreen() {
           </View>
         ) : null}
       </ScrollView>
+
+      <Modal
+        animationType="fade"
+        transparent
+        visible={isCleaningModalVisible}
+        onRequestClose={handleCloseCleaningModal}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Mesa en Limpieza</Text>
+            <Text style={styles.modalSubtitle}>{selectedCleaningTable?.table ?? 'Mesa seleccionada'}</Text>
+            <Text style={styles.modalHelper}>
+              La caja ya registro el cobro. Si el equipo termino de limpiarla, puedes liberarla ahora mismo.
+            </Text>
+
+            <View style={styles.modalActionsColumn}>
+              <Pressable
+                onPress={() => void handleReleaseCleaningTable()}
+                disabled={isReleasingCleaningTable}
+                style={[styles.modalPrimaryAction, isReleasingCleaningTable && styles.disabledAction]}>
+                <Text style={styles.modalPrimaryText}>
+                  {isReleasingCleaningTable ? 'Liberando mesa...' : 'Liberar Mesa Ahora'}
+                </Text>
+              </Pressable>
+
+              <Pressable onPress={handleCloseCleaningModal} style={styles.modalSecondaryAction}>
+                <Text style={styles.modalSecondaryText}>Cerrar</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         animationType="fade"
@@ -1125,6 +1327,10 @@ const styles = StyleSheet.create({
   giantButtonOccupied: {
     backgroundColor: '#FF6B35',
     borderColor: '#FF6B35',
+  },
+  giantButtonCleaning: {
+    backgroundColor: brand.status.cleaning,
+    borderColor: brand.status.cleaning,
   },
   giantButtonSelected: {
     borderColor: '#FF6B35',
@@ -1450,6 +1656,22 @@ const styles = StyleSheet.create({
   modalActions: {
     flexDirection: 'row',
     gap: 12,
+  },
+  modalActionsColumn: {
+    gap: 12,
+  },
+  modalPrimaryAction: {
+    minHeight: 64,
+    borderRadius: 14,
+    backgroundColor: '#FF6B35',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  modalPrimaryText: {
+    color: '#000000',
+    fontSize: 17,
+    fontWeight: '800',
   },
   modalSecondaryAction: {
     flex: 1,

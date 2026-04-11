@@ -15,75 +15,120 @@
 
     <main class="layout">
       <header class="hero">
-        <p class="eyebrow">Caja</p>
-        <h1>Panel de operaciones</h1>
-        <p id="lastUpdated" class="last-updated">Sincronizando pedidos...</p>
+        <div class="hero-head">
+          <div>
+            <p class="eyebrow">Caja</p>
+            <h1>Dashboard de cobro y monitoreo</h1>
+            <p class="subtitle">Control en tiempo real para pagos, limpieza y trazabilidad de mesas.</p>
+          </div>
+          <div class="sync-cluster">
+            <div class="sync-pill">
+              <span class="sync-dot"></span>
+              <span id="systemStatus">Sistema en linea - IP: --</span>
+            </div>
+            <p id="lastUpdated" class="last-updated">Sincronizando pedidos...</p>
+            <p id="lastOrderReceived" class="sync-secondary">Ultimo pedido recibido: esperando evento...</p>
+          </div>
+        </div>
         <p id="liveNotice" class="live-notice hidden"></p>
       </header>
 
-      <section class="grid">
-        <article class="card">
-          <h2>Registrar Pago</h2>
-          <form id="pagoForm" class="stack">
-            <label>
-              Mesa
-              <input type="text" id="mesaPago" placeholder="Ej: Mesa 1" required />
-            </label>
-            <label>
-              Metodo
-              <select id="metodoPago" required>
-                <option value="efectivo">efectivo</option>
-                <option value="tarjeta">tarjeta</option>
-                <option value="transferencia">transferencia</option>
-                <option value="binance">binance</option>
-              </select>
-            </label>
-            <label>
-              Monto recibido
-              <input type="number" id="montoRecibido" min="0" step="0.01" required />
-            </label>
-            <label>
-              Estado
-              <select id="estadoPago">
-                <option value="completado">completado</option>
-                <option value="confirmado">confirmado</option>
-                <option value="rechazado">rechazado</option>
-              </select>
-            </label>
-            <button type="submit">Registrar pago</button>
-          </form>
-        </article>
-      </section>
+      <section class="dashboard-shell">
+        <aside class="sidebar-column">
+          <article class="card payment-card sticky-card">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="section-kicker">Sidebar de cobro</p>
+                <h2>Registrar Pago</h2>
+              </div>
+              <span class="mini-chip">Caja activa</span>
+            </div>
 
-      <section class="card full">
-        <div class="toolbar">
-          <div>
-            <h2>Pedidos Recibidos de Mesonero</h2>
-            <p class="subtitle-inline">Sincronizacion en tiempo real con backend central</p>
-          </div>
-          <div class="toolbar-actions">
-            <button id="loadDemoPedidos" class="secondary">Cargar pedidos demo</button>
-            <button id="openReporte" class="secondary">Reporte</button>
-            <button id="reloadPedidos" class="secondary">Refrescar</button>
-          </div>
-        </div>
-        <div id="pedidosList" class="list"></div>
-      </section>
+            <form id="pagoForm" class="stack compact-form">
+              <label>
+                <span>Mesa</span>
+                <select id="mesaPago" required>
+                  <option value="">Selecciona una mesa ocupada</option>
+                </select>
+              </label>
+              <div class="form-two-columns">
+                <label>
+                  <span>Metodo</span>
+                  <select id="metodoPago" required>
+                    <option value="efectivo">efectivo</option>
+                    <option value="tarjeta">tarjeta</option>
+                    <option value="transferencia">transferencia</option>
+                    <option value="binance">binance</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Estado</span>
+                  <select id="estadoPago">
+                    <option value="completado">completado</option>
+                    <option value="fallido">fallido</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                <span>Monto recibido</span>
+                <input type="text" id="montoRecibido" inputmode="decimal" placeholder="0.00" autocomplete="off" required />
+              </label>
+              <p id="saldoPendiente" class="form-helper">Pendiente por cobrar: $0.00</p>
+              <p id="paymentWarning" class="form-warning hidden">Monto excede el total</p>
+              <button type="submit">Registrar pago</button>
+            </form>
 
-      <section class="card full hidden" id="reporteSection">
-        <div class="toolbar">
-          <h2>Reporte de Ventas</h2>
-          <button id="reloadReporte" class="secondary">Refrescar reporte</button>
-        </div>
-        <div class="report-summary">
-          <article class="report-total-card">
-            <p class="report-label">Resumen del día</p>
-            <p id="reportTotal" class="report-total-amount">$0.00</p>
-            <p id="reportMeta" class="report-meta">0 pedidos pagados hoy</p>
+            <div class="sidebar-meta-grid">
+              <article class="meta-card">
+                <p class="meta-label">Estado de caja</p>
+                <p class="meta-value">Online</p>
+                <p class="meta-copy">Socket y polling de respaldo activos.</p>
+              </article>
+              <article class="meta-card">
+                <p class="meta-label">Flujo operativo</p>
+                <p class="meta-value accent-copy">Abonos -> Limpieza</p>
+                <p class="meta-copy">La mesa pasa a limpieza solo cuando el total queda cubierto.</p>
+              </article>
+            </div>
           </article>
-          <div id="reportDailyCards" class="report-days"></div>
+        </aside>
+
+        <div class="monitor-column">
+          <section class="card full">
+            <div class="toolbar toolbar-monitor">
+              <div>
+                <p class="section-kicker">Panel de monitoreo</p>
+                <h2>Pedidos Recibidos</h2>
+                <p class="subtitle-inline">Vista central de mesas, clientes y montos sincronizados en tiempo real</p>
+              </div>
+              <div class="toolbar-actions">
+                <button id="loadDemoPedidos" class="secondary">Cargar pedidos demo</button>
+                <button id="openReporte" class="secondary">Reporte</button>
+                <button id="reloadPedidos" class="secondary">Refrescar</button>
+              </div>
+            </div>
+            <div id="pedidosList" class="monitor-grid"></div>
+          </section>
+
+          <section class="card full hidden" id="reporteSection">
+            <div class="toolbar toolbar-monitor">
+              <div>
+                <p class="section-kicker">Analitica</p>
+                <h2>Reporte de Ventas</h2>
+              </div>
+              <button id="reloadReporte" class="secondary">Refrescar reporte</button>
+            </div>
+            <div class="report-summary">
+              <article class="report-total-card">
+                <p class="report-label">Resumen del dia</p>
+                <p id="reportTotal" class="report-total-amount">$0.00</p>
+                <p id="reportMeta" class="report-meta">0 pedidos pagados hoy</p>
+              </article>
+              <div id="reportDailyCards" class="report-days"></div>
+            </div>
+            <div id="reporteList" class="list report-list"></div>
+          </section>
         </div>
-        <div id="reporteList" class="list"></div>
       </section>
 
     </main>
