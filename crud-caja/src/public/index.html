@@ -46,7 +46,12 @@
             </div>
 
             <form id="pagoForm" class="stack compact-form">
-              <input type="hidden" id="mesaPago" value="" />
+              <label class="mesa-select-field">
+                <span>Seleccionar Mesa</span>
+                <select id="mesaPago" required>
+                  <option value="">Selecciona una mesa ocupada</option>
+                </select>
+              </label>
               <div class="form-two-columns">
                 <label>
                   <span>Metodo</span>

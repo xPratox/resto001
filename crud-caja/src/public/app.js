@@ -31,9 +31,13 @@ const reportMeta = document.getElementById('reportMeta');
 const reportDailyCards = document.getElementById('reportDailyCards');
 const currentDateTime = document.getElementById('currentDateTime');
 
+const browserProtocol = window.location.protocol || 'http:';
+const browserHost = window.location.hostname || '127.0.0.1';
+const defaultBackendBaseUrl = `${browserProtocol}//${browserHost}:5000`;
+
 const { API_BASE_URL, SOCKET_URL } = window.RESTO_CONFIG || {
-  API_BASE_URL: 'http://192.168.0.100:5000',
-  SOCKET_URL: 'http://192.168.0.100:5000',
+  API_BASE_URL: defaultBackendBaseUrl,
+  SOCKET_URL: defaultBackendBaseUrl,
 };
 
 let socketInstance = null;
@@ -525,22 +529,54 @@ function renderMesaPagoOptions(tables) {
   }
 
   const currentValue = mesaPagoSelect.value;
-  activePaymentTables = tables;
+  activePaymentTables = tables.filter((table) => isOccupiedTableForPayment(table));
 
   mesaPagoSelect.innerHTML = `
     <option value="">Selecciona una mesa ocupada</option>
-    ${tables
+    ${activePaymentTables
       .map(
-        (table) => `<option value="${table.mesa}">${table.mesa}${table.clienteNombre ? ` - ${table.clienteNombre}` : ''}</option>`,
+        (table) => `<option value="${table.mesa}">${formatMesaOptionLabel(table)}</option>`,
       )
       .join('')}
   `;
 
-  if (tables.some((table) => table.mesa === currentValue)) {
+  if (activePaymentTables.some((table) => table.mesa === currentValue)) {
     mesaPagoSelect.value = currentValue;
   }
 
   syncPaymentFormState();
+}
+
+function isOccupiedTableForPayment(table) {
+  if (!table) {
+    return false;
+  }
+
+  const estado = String(table.estado || '').trim().toLowerCase();
+  return Boolean(table.mesa) && estado !== 'limpieza' && estado !== 'pagado' && Number(table.restante || 0) > 0;
+}
+
+function formatMesaSelectionLabel(mesa) {
+  const rawMesa = String(mesa || '').trim();
+
+  if (!rawMesa) {
+    return '--';
+  }
+
+  const numberMatch = rawMesa.match(/(\d+)/);
+
+  if (!numberMatch) {
+    return rawMesa;
+  }
+
+  return numberMatch[1].padStart(2, '0');
+}
+
+function formatMesaOptionLabel(table) {
+  const mesaLabel = formatMesaSelectionLabel(table?.mesa);
+  const clienteLabel = table?.clienteNombre ? ` · ${table.clienteNombre}` : '';
+
+  return `Mesa ${mesaLabel}${clienteLabel}`;
 }
 
 function getSelectedPaymentTable() {
@@ -556,6 +592,7 @@ function getSelectedPaymentTable() {
 function syncPaymentFormState() {
   const selectedTable = getSelectedPaymentTable();
   const selectedMesa = selectedTable?.mesa || mesaPagoSelect?.value?.trim() || '';
+  const selectedMesaLabel = formatMesaSelectionLabel(selectedMesa);
   const pendingAmount = Math.max(0, Number(selectedTable?.restante || 0));
   const rawValue = paymentAmountDraft;
   const enteredAmountUsd = rawValue === '' ? 0 : getEnteredAmountInUsd(rawValue);
@@ -571,7 +608,7 @@ function syncPaymentFormState() {
   }
 
   if (mesaSeleccionadaInfo) {
-    mesaSeleccionadaInfo.textContent = `Mesa seleccionada: ${selectedMesa || '--'}`;
+    mesaSeleccionadaInfo.textContent = `Mesa seleccionada: ${selectedMesaLabel}`;
   }
 
   if (conversionHint) {
@@ -616,13 +653,23 @@ function syncPaymentFormState() {
   }
 }
 
+function handleTableSelect(mesaId) {
+  if (!mesaPagoSelect) {
+    return;
+  }
+
+  const normalizedMesaId = String(mesaId || '').trim();
+  mesaPagoSelect.value = normalizedMesaId;
+  paymentAmountDraft = '';
+  syncPaymentFormState();
+}
+
 function focusMesaForPayment(mesa) {
   if (!mesaPagoSelect) {
     return;
   }
 
-  mesaPagoSelect.value = mesa;
-  syncPaymentFormState();
+  handleTableSelect(mesa);
   montoRecibidoInput?.focus();
   pagoForm?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -1248,7 +1295,9 @@ pedidosList.addEventListener('click', async (event) => {
 });
 
 reloadReporteBtn.addEventListener('click', loadReporte);
-mesaPagoSelect?.addEventListener('change', syncPaymentFormState);
+mesaPagoSelect?.addEventListener('change', (event) => {
+  handleTableSelect(event.target.value);
+});
 montoRecibidoInput?.addEventListener('input', handleMontoChange);
 monedaPagoSelect?.addEventListener('change', syncPaymentFormState);
 tasaBcvInput?.addEventListener('input', () => {
