@@ -78,6 +78,11 @@ type BackendTableStatus = Partial<TableStatus> & {
   highlighted?: boolean;
 };
 
+type DailyExchangeRateResponse = {
+  ok: boolean;
+  rate: number | null;
+};
+
 const TABLE_DEFINITIONS: TableDefinition[] = [
   { table: 'Mesa 1', section: 'Sala', capacity: 4 },
   { table: 'Mesa 2', section: 'Sala', capacity: 4 },
@@ -225,10 +230,13 @@ export default function HomeScreen() {
   const [activeSection, setActiveSection] = useState<'Sala' | 'Terraza'>('Sala');
   const [isReservationModalVisible, setIsReservationModalVisible] = useState(false);
   const [reservationName, setReservationName] = useState('');
+  const [dailyBcvRate, setDailyBcvRate] = useState<number | null>(null);
+  const [dailyPesoRate, setDailyPesoRate] = useState<number | null>(null);
   const [pendingTableSelection, setPendingTableSelection] = useState<TableDefinition | null>(null);
   const [selectedCleaningTable, setSelectedCleaningTable] = useState<TableStatus | null>(null);
   const [isCleaningModalVisible, setIsCleaningModalVisible] = useState(false);
   const [isReleasingCleaningTable, setIsReleasingCleaningTable] = useState(false);
+  const [isSocketConnected, setIsSocketConnected] = useState(restoSocket.connected);
   const releaseGuardTablesRef = useRef<Set<string>>(new Set());
 
   const lockTableAsAvailable = useCallback((tables: TableStatus[], tableName: string) => {
@@ -370,9 +378,37 @@ export default function HomeScreen() {
     }
   }, [commitIncomingTableStatuses]);
 
+  const fetchBcvRate = useCallback(async () => {
+    try {
+      const response = await axios.get<DailyExchangeRateResponse>(`${API_BASE_URL}/api/exchange-rate/today?type=bcv`, {
+        timeout: 10000,
+      });
+
+      const rate = Number(response.data.rate);
+      setDailyBcvRate(Number.isFinite(rate) && rate > 0 ? rate : null);
+    } catch {
+      setDailyBcvRate(null);
+    }
+  }, []);
+
+  const fetchPesoRate = useCallback(async () => {
+    try {
+      const response = await axios.get<DailyExchangeRateResponse>(`${API_BASE_URL}/api/exchange-rate/today?type=pesos`, {
+        timeout: 10000,
+      });
+
+      const rate = Number(response.data.rate);
+      setDailyPesoRate(Number.isFinite(rate) && rate > 0 ? rate : null);
+    } catch {
+      setDailyPesoRate(null);
+    }
+  }, []);
+
   useEffect(() => {
     void fetchMenu();
     void fetchTableStatuses(true);
+    void fetchBcvRate();
+    void fetchPesoRate();
 
     const intervalId = setInterval(() => {
       void fetchTableStatuses(false);
@@ -381,14 +417,22 @@ export default function HomeScreen() {
     return () => {
       clearInterval(intervalId);
     };
-  }, [fetchMenu, fetchTableStatuses]);
+  }, [fetchBcvRate, fetchMenu, fetchPesoRate, fetchTableStatuses]);
 
   useEffect(() => {
-    if (restoSocket.connected) {
-      return undefined;
-    }
+    setIsSocketConnected(restoSocket.connected);
 
-    restoSocket.connect();
+    const handleSocketConnect = () => {
+      setIsSocketConnected(true);
+    };
+
+    const handleSocketDisconnect = () => {
+      setIsSocketConnected(false);
+    };
+
+    if (!restoSocket.connected) {
+      restoSocket.connect();
+    }
 
     const handleOrderUpdated = () => {
       void fetchTableStatuses(false);
@@ -410,20 +454,41 @@ export default function HomeScreen() {
       void fetchTableStatuses(false);
     };
 
+    const handleRateUpdated = (payload?: { rateType?: string }) => {
+      if (payload?.rateType === 'pesos') {
+        void fetchPesoRate();
+        return;
+      }
+
+      if (payload?.rateType === 'bcv') {
+        void fetchBcvRate();
+        return;
+      }
+
+      void fetchBcvRate();
+      void fetchPesoRate();
+    };
+
+    restoSocket.on('connect', handleSocketConnect);
+    restoSocket.on('disconnect', handleSocketDisconnect);
     restoSocket.on('orden_actualizada', handleOrderUpdated);
     restoSocket.on('mesa_liberada', handleTableReleased);
     restoSocket.on('mesa_ocupada', handleTableOccupied);
     restoSocket.on('mesa_en_limpieza', handleTableCleaning);
     restoSocket.on('mesa_actualizada', handleTableUpdated);
+    restoSocket.on('tasa_actualizada', handleRateUpdated);
 
     return () => {
+      restoSocket.off('connect', handleSocketConnect);
+      restoSocket.off('disconnect', handleSocketDisconnect);
       restoSocket.off('orden_actualizada', handleOrderUpdated);
       restoSocket.off('mesa_liberada', handleTableReleased);
       restoSocket.off('mesa_ocupada', handleTableOccupied);
       restoSocket.off('mesa_en_limpieza', handleTableCleaning);
       restoSocket.off('mesa_actualizada', handleTableUpdated);
+      restoSocket.off('tasa_actualizada', handleRateUpdated);
     };
-  }, [fetchTableStatuses]);
+  }, [fetchBcvRate, fetchPesoRate, fetchTableStatuses]);
 
   useEffect(() => {
     const feedbackMessage = params.paymentSuccess || params.orderUpdatedSuccess;
@@ -450,6 +515,14 @@ export default function HomeScreen() {
   const displayedTotal = useMemo(
     () => (currentOrder._id ? currentOrder.total + pendingItemsTotal : currentOrder.total),
     [currentOrder._id, currentOrder.total, pendingItemsTotal],
+  );
+  const displayedTotalInBs = useMemo(
+    () => (dailyBcvRate ? displayedTotal * dailyBcvRate : null),
+    [dailyBcvRate, displayedTotal],
+  );
+  const displayedTotalInPesos = useMemo(
+    () => (dailyPesoRate ? displayedTotal * dailyPesoRate : null),
+    [dailyPesoRate, displayedTotal],
   );
   const totalItems = useMemo(() => combinedOrderItems.length, [combinedOrderItems]);
   const canRemoveItems = !currentOrder._id || currentOrder.status === 'pendiente';
@@ -843,8 +916,15 @@ export default function HomeScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.heroCard}>
           <Text style={styles.overline}>Resto 001</Text>
-          <Text style={styles.title}>Mesonero móvil con flujo rápido para mesa, plato y nota.</Text>
-          <Text style={styles.subtitle}>Backend local: {API_BASE_URL}</Text>
+          <Text style={styles.title}>Mesonero movil</Text>
+          <View style={styles.connectionBadge}>
+            <FontAwesome5
+              name={isSocketConnected ? 'link' : 'unlink'}
+              size={12}
+              color={isSocketConnected ? '#10B981' : '#F59E0B'}
+            />
+            <Text style={styles.connectionText}>{isSocketConnected ? 'Enlazado con caja' : 'Conectando con caja'}</Text>
+          </View>
         </View>
 
         <View style={styles.stepsRow}>
@@ -1027,7 +1107,11 @@ export default function HomeScreen() {
 
               <View style={styles.totalRow}>
                 <Text style={styles.totalLabel}>Total</Text>
-                <Text style={styles.totalValue}>${displayedTotal.toFixed(2)}</Text>
+                <View style={styles.totalValueStack}>
+                  <Text style={styles.totalValue}>${displayedTotal.toFixed(2)}</Text>
+                  {displayedTotalInBs ? <Text style={styles.totalValueBs}>Bs {displayedTotalInBs.toFixed(2)}</Text> : null}
+                  {displayedTotalInPesos ? <Text style={styles.totalValueBs}>Pesos {displayedTotalInPesos.toFixed(2)}</Text> : null}
+                </View>
               </View>
 
               <Pressable
@@ -1223,10 +1307,23 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     lineHeight: 34,
   },
-  subtitle: {
+  connectionBadge: {
     marginTop: 10,
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    borderWidth: 1,
+    borderColor: '#334155',
+  },
+  connectionText: {
     color: '#CBD5E1',
     fontSize: 14,
+    fontWeight: '600',
   },
   stepsRow: {
     flexDirection: 'row',
@@ -1560,6 +1657,15 @@ const styles = StyleSheet.create({
     color: '#F8FAFC',
     fontSize: 22,
     fontWeight: '800',
+  },
+  totalValueStack: {
+    alignItems: 'flex-end',
+    gap: 2,
+  },
+  totalValueBs: {
+    color: '#94A3B8',
+    fontSize: 12,
+    fontWeight: '700',
   },
   successBanner: {
     borderRadius: 20,

@@ -2,16 +2,23 @@ const pagoForm = document.getElementById('pagoForm');
 const mesaPagoSelect = document.getElementById('mesaPago');
 const metodoPagoSelect = document.getElementById('metodoPago');
 const montoRecibidoInput = document.getElementById('montoRecibido');
+const monedaPagoSelect = document.getElementById('monedaPago');
 const estadoPagoSelect = document.getElementById('estadoPago');
 const saldoPendiente = document.getElementById('saldoPendiente');
+const mesaSeleccionadaInfo = document.getElementById('mesaSeleccionadaInfo');
+const tasaBcvInput = document.getElementById('tasaBcvInput');
+const guardarTasaBcvButton = document.getElementById('guardarTasaBcv');
+const tasaBcvStatus = document.getElementById('tasaBcvStatus');
+const tasaPesosInput = document.getElementById('tasaPesosInput');
+const guardarTasaPesosButton = document.getElementById('guardarTasaPesos');
+const tasaPesosStatus = document.getElementById('tasaPesosStatus');
+const conversionHint = document.getElementById('conversionHint');
 const paymentWarning = document.getElementById('paymentWarning');
 const paymentSubmitButton = pagoForm?.querySelector('button[type="submit"]');
 const pedidosList = document.getElementById('pedidosList');
 const reporteList = document.getElementById('reporteList');
 const reporteSection = document.getElementById('reporteSection');
 const openReporteBtn = document.getElementById('openReporte');
-const loadDemoPedidosBtn = document.getElementById('loadDemoPedidos');
-const reloadPedidosBtn = document.getElementById('reloadPedidos');
 const reloadReporteBtn = document.getElementById('reloadReporte');
 const liveNotice = document.getElementById('liveNotice');
 const lastUpdated = document.getElementById('lastUpdated');
@@ -20,6 +27,7 @@ const systemStatus = document.getElementById('systemStatus');
 const reportTotal = document.getElementById('reportTotal');
 const reportMeta = document.getElementById('reportMeta');
 const reportDailyCards = document.getElementById('reportDailyCards');
+const currentDateTime = document.getElementById('currentDateTime');
 
 const { API_BASE_URL, SOCKET_URL } = window.RESTO_CONFIG || {
   API_BASE_URL: 'http://192.168.0.100:5000',
@@ -30,14 +38,22 @@ let socketInstance = null;
 let noticeTimer = null;
 let pollingTimer = null;
 let elapsedTimer = null;
+let dateTimeTimer = null;
 let lastPedidosSyncAt = null;
 let lastRealtimeOrderAt = null;
 let lastRealtimeOrderLabel = '';
 let pedidosRequestInFlight = null;
 let activePaymentTables = [];
 let paymentAmountDraft = '';
+let currentDailyBcvRate = null;
+let currentBcvDayKey = null;
+let canEditBcvRate = true;
+let currentDailyPesoRate = null;
+let currentPesoDayKey = null;
+let canEditPesoRate = true;
 
 const POLLING_INTERVAL_MS = 10000;
+const DASHBOARD_TIMEZONE = 'America/Caracas';
 
 function setStatus(message, data) {
   if (data) {
@@ -106,6 +122,21 @@ function updateSystemStatusLabel(connected = true) {
   systemStatus.textContent = `${stateLabel} - IP: ${getBackendHostLabel()}`;
 }
 
+function updateCurrentDateTimeLabel() {
+  if (!currentDateTime) {
+    return;
+  }
+
+  const now = new Date();
+  const formattedDateTime = new Intl.DateTimeFormat('es-VE', {
+    timeZone: DASHBOARD_TIMEZONE,
+    dateStyle: 'full',
+    timeStyle: 'medium',
+  }).format(now);
+
+  currentDateTime.textContent = `Fecha y hora: ${formattedDateTime}`;
+}
+
 function updateLastUpdatedLabel() {
   if (!lastUpdated) {
     return;
@@ -146,6 +177,15 @@ function ensureElapsedTimer() {
   elapsedTimer = window.setInterval(updateLastUpdatedLabel, 1000);
 }
 
+function ensureDateTimeTimer() {
+  if (dateTimeTimer) {
+    return;
+  }
+
+  updateCurrentDateTimeLabel();
+  dateTimeTimer = window.setInterval(updateCurrentDateTimeLabel, 1000);
+}
+
 function stopElapsedTimer() {
   if (!elapsedTimer) {
     return;
@@ -153,6 +193,15 @@ function stopElapsedTimer() {
 
   window.clearInterval(elapsedTimer);
   elapsedTimer = null;
+}
+
+function stopDateTimeTimer() {
+  if (!dateTimeTimer) {
+    return;
+  }
+
+  window.clearInterval(dateTimeTimer);
+  dateTimeTimer = null;
 }
 
 function markRealtimeActivity(payload) {
@@ -248,13 +297,33 @@ function getSelectedPaymentTable() {
 
 function syncPaymentFormState() {
   const selectedTable = getSelectedPaymentTable();
+  const selectedMesa = selectedTable?.mesa || mesaPagoSelect?.value?.trim() || '';
   const pendingAmount = Math.max(0, Number(selectedTable?.restante || 0));
   const rawValue = paymentAmountDraft;
-  const enteredAmount = rawValue === '' ? 0 : parseFloat(rawValue);
-  const exceedsPending = Boolean(selectedTable) && rawValue !== '' && Number.isFinite(enteredAmount) && enteredAmount > pendingAmount;
+  const enteredAmountUsd = rawValue === '' ? 0 : getEnteredAmountInUsd(rawValue);
+  const comparableEnteredUsd = Number.isFinite(enteredAmountUsd) ? Number(enteredAmountUsd.toFixed(2)) : NaN;
+  const selectedCurrency = String(monedaPagoSelect?.value || 'USD').toUpperCase();
+  const missingRateForCurrency =
+    (selectedCurrency === 'BS' && rawValue !== '' && (!Number.isFinite(currentDailyBcvRate) || currentDailyBcvRate <= 0)) ||
+    ((selectedCurrency === 'COP' || selectedCurrency === 'PESOS') && rawValue !== '' && (!Number.isFinite(currentDailyPesoRate) || currentDailyPesoRate <= 0));
+  const exceedsPending = Boolean(selectedTable) && rawValue !== '' && Number.isFinite(comparableEnteredUsd) && comparableEnteredUsd > pendingAmount;
 
   if (saldoPendiente) {
     saldoPendiente.textContent = `Pendiente por cobrar: ${formatMoney(pendingAmount)}`;
+  }
+
+  if (mesaSeleccionadaInfo) {
+    mesaSeleccionadaInfo.textContent = `Mesa seleccionada: ${selectedMesa || '--'}`;
+  }
+
+  if (conversionHint) {
+    const bsLabel = Number.isFinite(currentDailyBcvRate) && currentDailyBcvRate > 0
+      ? formatBs(pendingAmount * currentDailyBcvRate)
+      : 'BS --';
+    const copLabel = Number.isFinite(currentDailyPesoRate) && currentDailyPesoRate > 0
+      ? formatPesos(pendingAmount * currentDailyPesoRate)
+      : 'COP --';
+    conversionHint.textContent = `Equivalente: ${bsLabel} | ${copLabel}`;
   }
 
   if (montoRecibidoInput) {
@@ -271,11 +340,21 @@ function syncPaymentFormState() {
   }
 
   if (paymentWarning) {
-    paymentWarning.classList.toggle('hidden', !exceedsPending);
+    if (missingRateForCurrency) {
+      paymentWarning.textContent = selectedCurrency === 'BS'
+        ? 'Debes fijar la tasa BCV del dia para cobrar en Bs.'
+        : 'Debes fijar la tasa COP del dia para cobrar en COP.';
+      paymentWarning.classList.remove('hidden');
+    } else if (exceedsPending) {
+      paymentWarning.textContent = 'Monto excede el total';
+      paymentWarning.classList.remove('hidden');
+    } else {
+      paymentWarning.classList.add('hidden');
+    }
   }
 
   if (paymentSubmitButton) {
-    paymentSubmitButton.disabled = !selectedTable || pendingAmount <= 0 || rawValue === '' || exceedsPending;
+    paymentSubmitButton.disabled = !selectedTable || pendingAmount <= 0 || rawValue === '' || exceedsPending || missingRateForCurrency;
   }
 }
 
@@ -292,6 +371,193 @@ function focusMesaForPayment(mesa) {
 
 function formatMoney(amount) {
   return `$${Number(amount || 0).toFixed(2)}`;
+}
+
+function formatBs(amount) {
+  return `BS ${Number(amount || 0).toFixed(2)}`;
+}
+
+function formatPesos(amount) {
+  return `COP ${Number(amount || 0).toFixed(2)}`;
+}
+
+function parseDecimalInput(value) {
+  const normalized = String(value ?? '').replace(',', '.').trim();
+  const parsed = parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function getEnteredAmountInUsd(rawValue) {
+  const parsedAmount = parseDecimalInput(rawValue);
+  const selectedCurrency = String(monedaPagoSelect?.value || 'USD').toUpperCase();
+
+  if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+    return NaN;
+  }
+
+  if (selectedCurrency === 'USD') {
+    return parsedAmount;
+  }
+
+  if (selectedCurrency === 'BS') {
+    if (!Number.isFinite(currentDailyBcvRate) || currentDailyBcvRate <= 0) {
+      return NaN;
+    }
+
+    return parsedAmount / currentDailyBcvRate;
+  }
+
+  if (selectedCurrency === 'COP' || selectedCurrency === 'PESOS') {
+    if (!Number.isFinite(currentDailyPesoRate) || currentDailyPesoRate <= 0) {
+      return NaN;
+    }
+
+    return parsedAmount / currentDailyPesoRate;
+  }
+
+  return NaN;
+}
+
+function refreshBcvStatusLabel() {
+  if (!tasaBcvStatus) {
+    return;
+  }
+
+  if (!Number.isFinite(currentDailyBcvRate) || currentDailyBcvRate <= 0) {
+    tasaBcvStatus.textContent = 'Tasa BCV del dia: sin asignar';
+    return;
+  }
+
+  const dayLabel = currentBcvDayKey ? ` (${currentBcvDayKey})` : '';
+  const lockLabel = canEditBcvRate ? '' : ' · bloqueada hasta mañana';
+  tasaBcvStatus.textContent = `Tasa BCV del dia: ${currentDailyBcvRate.toFixed(2)}${dayLabel}${lockLabel}`;
+}
+
+function refreshPesosStatusLabel() {
+  if (!tasaPesosStatus) {
+    return;
+  }
+
+  if (!Number.isFinite(currentDailyPesoRate) || currentDailyPesoRate <= 0) {
+    tasaPesosStatus.textContent = 'Tasa COP del dia: sin asignar';
+    return;
+  }
+
+  const dayLabel = currentPesoDayKey ? ` (${currentPesoDayKey})` : '';
+  const lockLabel = canEditPesoRate ? '' : ' · bloqueada hasta mañana';
+  tasaPesosStatus.textContent = `Tasa COP del dia: ${currentDailyPesoRate.toFixed(2)}${dayLabel}${lockLabel}`;
+}
+
+function applyBcvRateState({ rate, canEdit, dayKey }) {
+  currentDailyBcvRate = Number.isFinite(Number(rate)) ? Number(rate) : null;
+  currentBcvDayKey = dayKey || null;
+  canEditBcvRate = Boolean(canEdit);
+
+  if (tasaBcvInput) {
+    tasaBcvInput.disabled = !canEdit;
+    if (!canEdit && Number.isFinite(currentDailyBcvRate)) {
+      tasaBcvInput.value = currentDailyBcvRate.toFixed(2);
+    }
+  }
+
+  if (guardarTasaBcvButton) {
+    guardarTasaBcvButton.disabled = !canEdit;
+    guardarTasaBcvButton.textContent = canEdit ? 'Guardar' : 'Bloqueada hoy';
+  }
+
+  refreshBcvStatusLabel();
+}
+
+function applyPesosRateState({ rate, canEdit, dayKey }) {
+  currentDailyPesoRate = Number.isFinite(Number(rate)) ? Number(rate) : null;
+  currentPesoDayKey = dayKey || null;
+  canEditPesoRate = Boolean(canEdit);
+
+  if (tasaPesosInput) {
+    tasaPesosInput.disabled = !canEdit;
+    if (!canEdit && Number.isFinite(currentDailyPesoRate)) {
+      tasaPesosInput.value = currentDailyPesoRate.toFixed(2);
+    }
+  }
+
+  if (guardarTasaPesosButton) {
+    guardarTasaPesosButton.disabled = !canEdit;
+    guardarTasaPesosButton.textContent = canEdit ? 'Guardar' : 'Bloqueada hoy';
+  }
+
+  refreshPesosStatusLabel();
+}
+
+async function loadBcvRate() {
+  const data = await requestCentral('/api/exchange-rate/today?type=bcv');
+  applyBcvRateState({
+    rate: data.rate,
+    canEdit: Boolean(data.canEdit),
+    dayKey: data.dayKey,
+  });
+  syncPaymentFormState();
+}
+
+async function loadPesosRate() {
+  const data = await requestCentral('/api/exchange-rate/today?type=pesos');
+  applyPesosRateState({
+    rate: data.rate,
+    canEdit: Boolean(data.canEdit),
+    dayKey: data.dayKey,
+  });
+  syncPaymentFormState();
+}
+
+async function saveBcvRate() {
+  const parsedRate = parseDecimalInput(tasaBcvInput?.value ?? '');
+
+  if (!Number.isFinite(parsedRate) || parsedRate <= 0) {
+    throw new Error('Ingresa una tasa BCV valida mayor a cero.');
+  }
+
+  const data = await requestCentral('/api/exchange-rate/today?type=bcv', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-resto-module': 'caja',
+    },
+    body: JSON.stringify({ rate: parsedRate }),
+  });
+
+  applyBcvRateState({
+    rate: data.rate,
+    canEdit: false,
+    dayKey: data.dayKey,
+  });
+
+  syncPaymentFormState();
+  showLiveNotice(`Tasa BCV fijada en ${parsedRate.toFixed(2)} para hoy.`);
+}
+
+async function savePesosRate() {
+  const parsedRate = parseDecimalInput(tasaPesosInput?.value ?? '');
+
+  if (!Number.isFinite(parsedRate) || parsedRate <= 0) {
+    throw new Error('Ingresa una tasa COP valida mayor a cero.');
+  }
+
+  const data = await requestCentral('/api/exchange-rate/today?type=pesos', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-resto-module': 'caja',
+    },
+    body: JSON.stringify({ rate: parsedRate }),
+  });
+
+  applyPesosRateState({
+    rate: data.rate,
+    canEdit: false,
+    dayKey: data.dayKey,
+  });
+
+  syncPaymentFormState();
+  showLiveNotice(`Tasa COP fijada en ${parsedRate.toFixed(2)} para hoy.`);
 }
 
 function handleMontoChange(event) {
@@ -331,18 +597,20 @@ function getPedidoStatusMeta(status) {
 }
 
 function renderPedidos(items) {
+  const visibleItems = items.filter((pedido) => pedido.estado !== 'limpieza');
+
   pedidosList.innerHTML = '';
 
-  if (!items.length) {
+  if (!visibleItems.length) {
     pedidosList.innerHTML = `
       <article class="empty-state">
-        <p>No hay pedidos activos en el backend central.</p>
+        <p>No hay pedidos activos pendientes en caja.</p>
       </article>
     `;
     return;
   }
 
-  items.forEach((pedido) => {
+  visibleItems.forEach((pedido) => {
     const div = document.createElement('article');
     const statusMeta = getPedidoStatusMeta(pedido.estado);
     div.className = `pedido-card ${statusMeta.cardClass}`;
@@ -380,11 +648,15 @@ function renderPedidos(items) {
       <div class="pedido-footer">
         <div>
           <p class="pedido-total-label">Monto total</p>
-          <p class="pedido-total-value">${formatMoney(pedido.total)}</p>
+          <p class="pedido-total-value">
+            <span>USD ${Number(pedido.total || 0).toFixed(2)}</span>
+            ${Number.isFinite(currentDailyBcvRate) && currentDailyBcvRate > 0 ? `<span class="pedido-total-bs">${formatBs(pedido.total * currentDailyBcvRate)}</span>` : ''}
+            ${Number.isFinite(currentDailyPesoRate) && currentDailyPesoRate > 0 ? `<span class="pedido-total-bs">${formatPesos(pedido.total * currentDailyPesoRate)}</span>` : ''}
+          </p>
           <p class="pedido-balance-line">Pagado: ${formatMoney(pedido.montoPagado)}</p>
           <p class="pedido-balance-line ${pedido.restante > 0 ? 'is-pending' : 'is-complete'}">Restante: ${formatMoney(pedido.restante)}</p>
         </div>
-        ${pedido.estado !== 'pagado' && pedido.estado !== 'limpieza' ? `<button data-action="seleccionar-mesa" data-mesa="${pedido.mesa}">Cobrar desde sidebar</button>` : ''}
+        ${pedido.estado !== 'pagado' && pedido.estado !== 'limpieza' ? `<button data-action="seleccionar-mesa" data-mesa="${pedido.mesa}">Seleccionar</button>` : ''}
       </div>
     `;
 
@@ -584,6 +856,18 @@ async function ensureSocket() {
     await loadPedidos({ silent: true });
   });
 
+  socketInstance.on('tasa_actualizada', async (payload) => {
+    try {
+      if (payload?.rateType === 'pesos') {
+        await loadPesosRate();
+      } else {
+        await loadBcvRate();
+      }
+    } catch (error) {
+      setStatus('Error sincronizando tasa diaria', { error: error.message });
+    }
+  });
+
   return socketInstance;
 }
 
@@ -609,6 +893,7 @@ function stopPedidosPolling() {
 function cleanupRealtimeResources() {
   stopPedidosPolling();
   stopElapsedTimer();
+  stopDateTimeTimer();
 
   if (socketInstance) {
     socketInstance.disconnect();
@@ -623,7 +908,8 @@ pagoForm.addEventListener('submit', async (event) => {
     const mesa = mesaPagoSelect?.value?.trim();
     const metodo = metodoPagoSelect?.value || 'efectivo';
     const estado = estadoPagoSelect?.value || 'completado';
-    const montoRecibido = parseFloat(paymentAmountDraft || '0');
+    const montoRecibidoUsd = getEnteredAmountInUsd(paymentAmountDraft || '0');
+    const montoRecibido = Number.isFinite(montoRecibidoUsd) ? Number(montoRecibidoUsd.toFixed(2)) : NaN;
 
     if (!mesa) {
       throw new Error('Debes seleccionar una mesa ocupada para cobrar.');
@@ -631,6 +917,10 @@ pagoForm.addEventListener('submit', async (event) => {
 
     const selectedTable = getSelectedPaymentTable();
     const pendingAmount = Math.max(0, Number(selectedTable?.restante || 0));
+
+    if (!Number.isFinite(montoRecibido) || montoRecibido <= 0) {
+      throw new Error('Monto recibido invalido para la moneda seleccionada.');
+    }
 
     if (montoRecibido > pendingAmount) {
       throw new Error(`Monto excede el total pendiente (${formatMoney(pendingAmount)}).`);
@@ -677,16 +967,48 @@ pedidosList.addEventListener('click', async (event) => {
   }
 });
 
-reloadPedidosBtn.addEventListener('click', loadPedidos);
 reloadReporteBtn.addEventListener('click', loadReporte);
 mesaPagoSelect?.addEventListener('change', syncPaymentFormState);
 montoRecibidoInput?.addEventListener('input', handleMontoChange);
+monedaPagoSelect?.addEventListener('change', syncPaymentFormState);
+tasaBcvInput?.addEventListener('input', () => {
+  if (tasaBcvInput?.disabled) {
+    return;
+  }
 
-if (loadDemoPedidosBtn) {
-  loadDemoPedidosBtn.addEventListener('click', async () => {
-    showLiveNotice('Los pedidos demo locales no forman parte del backend central.', 'default');
-  });
-}
+  const draftRate = parseDecimalInput(tasaBcvInput.value);
+  currentDailyBcvRate = Number.isFinite(draftRate) && draftRate > 0 ? draftRate : null;
+  syncPaymentFormState();
+});
+guardarTasaBcvButton?.addEventListener('click', async () => {
+  try {
+    await saveBcvRate();
+  } catch (error) {
+    alert('Error guardando tasa BCV: ' + error.message);
+    setStatus('Error guardando tasa BCV', { error: error.message });
+    await loadBcvRate().catch(() => {});
+  }
+});
+
+tasaPesosInput?.addEventListener('input', () => {
+  if (tasaPesosInput?.disabled) {
+    return;
+  }
+
+  const draftRate = parseDecimalInput(tasaPesosInput.value);
+  currentDailyPesoRate = Number.isFinite(draftRate) && draftRate > 0 ? draftRate : null;
+  syncPaymentFormState();
+});
+
+guardarTasaPesosButton?.addEventListener('click', async () => {
+  try {
+    await savePesosRate();
+  } catch (error) {
+    alert('Error guardando tasa COP: ' + error.message);
+    setStatus('Error guardando tasa COP', { error: error.message });
+    await loadPesosRate().catch(() => {});
+  }
+});
 
 openReporteBtn.addEventListener('click', async () => {
   const isHidden = reporteSection.classList.contains('hidden');
@@ -708,6 +1030,8 @@ window.addEventListener('pagehide', cleanupRealtimeResources);
   updateSystemStatusLabel(false);
   syncPaymentFormState();
   ensureElapsedTimer();
+  ensureDateTimeTimer();
+  await Promise.all([loadBcvRate(), loadPesosRate()]);
   await ensureSocket();
   await loadPedidos();
   startPedidosPolling();

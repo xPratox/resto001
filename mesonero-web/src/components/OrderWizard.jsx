@@ -24,6 +24,10 @@ function formatPrice(amount) {
   return `$${amount.toFixed(2)}`
 }
 
+function formatPesos(amount) {
+  return `Pesos ${amount.toFixed(2)}`
+}
+
 function normalizeOrder(order) {
   return {
     _id: order._id,
@@ -96,6 +100,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
   const [isLoadingTables, setIsLoadingTables] = useState(true)
   const [isCajaConnected, setIsCajaConnected] = useState(false)
   const [isReleasingTable, setIsReleasingTable] = useState(false)
+  const [dailyExchangeRate, setDailyExchangeRate] = useState(null)
 
   const quickNotes = selectedMenuItem
     ? quickNotesByCategory[selectedMenuItem.category]
@@ -108,6 +113,13 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
   const canRemoveItems = !currentOrder._id || currentOrder.status === 'pendiente'
   const canEditActiveOrder = currentOrder._id && !isOrderLocked(currentOrder.status)
   const groupedEditableItems = useMemo(() => groupItems(editableItems), [editableItems])
+  const totalInPesos = useMemo(() => {
+    if (!Number.isFinite(Number(dailyExchangeRate)) || Number(dailyExchangeRate) <= 0) {
+      return null
+    }
+
+    return Number(currentOrder.total || 0) * Number(dailyExchangeRate)
+  }, [currentOrder.total, dailyExchangeRate])
 
   const fetchTableStatuses = useCallback(async (showLoader = false) => {
     if (showLoader) {
@@ -129,17 +141,30 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
     }
   }, [])
 
+  const fetchDailyExchangeRate = useCallback(async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/exchange-rate/today?type=pesos`)
+      const data = await parseJsonResponse(response)
+      const rate = Number(data?.rate)
+      setDailyExchangeRate(Number.isFinite(rate) && rate > 0 ? rate : null)
+    } catch (error) {
+      setDailyExchangeRate(null)
+    }
+  }, [])
+
   useEffect(() => {
     fetchTableStatuses(true)
+    fetchDailyExchangeRate()
 
     const intervalId = window.setInterval(() => {
       fetchTableStatuses(false)
+      fetchDailyExchangeRate()
     }, 4000)
 
     return () => {
       window.clearInterval(intervalId)
     }
-  }, [fetchTableStatuses])
+  }, [fetchDailyExchangeRate, fetchTableStatuses])
 
   useEffect(() => {
     if (!isDirty) {
@@ -444,6 +469,31 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
     }
 
     setIsReleasingTable(true)
+    setFeedbackType('default')
+    setFeedback(`${tableToRelease} liberandose...`)
+
+    // Oculta de inmediato la mesa en limpieza mientras se confirma en backend.
+    setTableStatuses((previousTables) =>
+      previousTables.map((tableStatus) =>
+        tableStatus.table === tableToRelease
+          ? {
+              ...tableStatus,
+              occupied: false,
+              orderId: null,
+              status: 'disponible',
+              cliente_nombre: '',
+            }
+          : tableStatus,
+      ),
+    )
+
+    setStep(1)
+    setCurrentOrder(initialOrder)
+    setEditableItems([])
+    setIsDirty(false)
+    setSelectedMenuItem(null)
+    setSelectedNote('Sin hielo')
+    setSelectedCategory('Bebidas')
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/tables/${encodeURIComponent(tableToRelease)}/liberar`, {
@@ -452,29 +502,6 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
 
       await parseJsonResponse(response)
 
-      // Cambio optimista: libera visualmente la mesa en cuanto confirma el backend.
-      setTableStatuses((previousTables) =>
-        previousTables.map((tableStatus) =>
-          tableStatus.table === tableToRelease
-            ? {
-                ...tableStatus,
-                occupied: false,
-                orderId: null,
-                status: 'disponible',
-                cliente_nombre: '',
-              }
-            : tableStatus,
-        ),
-      )
-
-      setStep(1)
-      setCurrentOrder(initialOrder)
-      setEditableItems([])
-      setIsDirty(false)
-      setSelectedMenuItem(null)
-      setSelectedNote('Sin hielo')
-      setSelectedCategory('Bebidas')
-
       setFeedbackType('success')
       setFeedback(`${tableToRelease} fue marcada como libre.`)
 
@@ -482,6 +509,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
     } catch (error) {
       setFeedbackType('default')
       setFeedback(error.message || 'No se pudo liberar la mesa.')
+      void fetchTableStatuses(false)
     } finally {
       setIsReleasingTable(false)
     }
@@ -968,7 +996,12 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
           </div>
           <div className="mt-3 flex items-center justify-between text-xl font-semibold text-snowText">
             <span>Total</span>
-            <span>{formatPrice(currentOrder.total)}</span>
+            <div className="text-right">
+              <span>{formatPrice(currentOrder.total)}</span>
+              {totalInPesos ? (
+                <p className="mt-1 text-xs font-semibold text-slate-400">{formatPesos(totalInPesos)}</p>
+              ) : null}
+            </div>
           </div>
         </div>
 

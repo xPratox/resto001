@@ -490,6 +490,37 @@ button.secondary {
   color: var(--text-metallic-muted);
   font-size: 13px;
 }
+
+.rate-compact-wrap {
+  display: grid;
+  gap: 6px;
+}
+
+.rate-compact-title {
+  margin: 0;
+  color: var(--text-metallic-muted);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+}
+
+.rate-compact-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.rate-input-compact {
+  min-height: 40px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.rate-button-compact {
+  min-height: 40px;
+  padding: 8px 12px;
+  font-size: 12px;
+  border-radius: 10px;
+}
 .form-warning {
   margin: -6px 0 0;
   color: var(--status-error);
@@ -522,6 +553,16 @@ button.secondary {
   color: var(--status-success);
   font-size: 28px;
   font-weight: 800;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.pedido-total-bs {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-metallic-muted);
 }
 
 .pedido-balance-line {

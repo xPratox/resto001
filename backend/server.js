@@ -19,13 +19,14 @@ const server = http.createServer(app);
 const corsOptions = {
 	origin: true,
 	methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-	allowedHeaders: ['Content-Type', 'Authorization'],
+	allowedHeaders: ['Content-Type', 'Authorization', 'x-resto-module'],
 };
 
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT) || 5000;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/resto001';
 const HISTORY_TIMEZONE = process.env.HISTORY_TIMEZONE || 'America/Caracas';
+const EXCHANGE_RATE_TIMEZONE = process.env.EXCHANGE_RATE_TIMEZONE || HISTORY_TIMEZONE;
 const AUTO_RECOVER_PORT = process.env.AUTO_RECOVER_PORT !== 'false';
 const PORT_RECOVERY_WAIT_MS = 250;
 const PORT_RECOVERY_MAX_ATTEMPTS = 12;
@@ -435,9 +436,55 @@ const orderSchema = new mongoose.Schema(
 
 const Order = mongoose.models.Order || mongoose.model('Order', orderSchema);
 
-function getHistoryDateKey(date) {
+const exchangeRateSchema = new mongoose.Schema(
+	{
+		dayKey: { type: String, required: true, index: true, trim: true },
+		rate: { type: Number, required: true, min: 0.0001 },
+		assignedBy: { type: String, default: 'caja', trim: true },
+		assignedAt: { type: Date, default: Date.now },
+	},
+	{
+		timestamps: true,
+	}
+);
+
+const pesoRateSchema = new mongoose.Schema(
+	{
+		dayKey: { type: String, required: true, unique: true, index: true, trim: true },
+		rate: { type: Number, required: true, min: 0.0001 },
+		assignedBy: { type: String, default: 'caja', trim: true },
+		assignedAt: { type: Date, default: Date.now },
+	},
+	{
+		timestamps: true,
+	}
+);
+
+const DailyExchangeRate = mongoose.models.DailyExchangeRate || mongoose.model('DailyExchangeRate', exchangeRateSchema);
+const DailyPesoRate = mongoose.models.DailyPesoRate || mongoose.model('DailyPesoRate', pesoRateSchema);
+
+function normalizeRateType(value) {
+	const normalized = String(value || 'bcv').trim().toLowerCase();
+	return normalized === 'pesos' ? 'pesos' : 'bcv';
+}
+
+function getRateModelByType(rateType) {
+	if (rateType === 'pesos') {
+		return {
+			model: DailyPesoRate,
+			label: 'Pesos',
+		};
+	}
+
+	return {
+		model: DailyExchangeRate,
+		label: 'BCV',
+	};
+}
+
+function getHistoryDateKey(date, timezone = HISTORY_TIMEZONE) {
 	const formatter = new Intl.DateTimeFormat('en-CA', {
-		timeZone: HISTORY_TIMEZONE,
+		timeZone: timezone,
 		year: 'numeric',
 		month: '2-digit',
 		day: '2-digit',
@@ -603,6 +650,101 @@ app.get('/api/menu', (req, res) => {
 		ok: true,
 		items: menuItems,
 	});
+});
+
+app.get('/api/exchange-rate/today', async (_req, res) => {
+	try {
+		const rateType = normalizeRateType(_req.query?.type);
+		const { model } = getRateModelByType(rateType);
+		const dayKey = getHistoryDateKey(new Date(), EXCHANGE_RATE_TIMEZONE);
+		const dailyRate = await model.findOne({ dayKey }).lean();
+
+		return res.json({
+			ok: true,
+			rateType,
+			timezone: EXCHANGE_RATE_TIMEZONE,
+			dayKey,
+			rate: dailyRate?.rate ?? null,
+			isAssigned: Boolean(dailyRate),
+			canEdit: !dailyRate,
+			assignedAt: dailyRate?.assignedAt ?? null,
+			assignedBy: dailyRate?.assignedBy ?? null,
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: 'No se pudo consultar la tasa del dia.',
+			error: error.message,
+		});
+	}
+});
+
+app.put('/api/exchange-rate/today', async (req, res) => {
+	const moduleName = String(req.headers['x-resto-module'] || '').trim().toLowerCase();
+	const parsedRate = parseCurrency(req.body?.rate);
+	const rateType = normalizeRateType(req.query?.type || req.body?.type);
+	const { model, label } = getRateModelByType(rateType);
+
+	if (moduleName !== 'caja') {
+		return res.status(403).json({
+			ok: false,
+			message: `Solo caja puede asignar la tasa ${label} diaria.`,
+		});
+	}
+
+	if (!Number.isFinite(parsedRate) || parsedRate <= 0) {
+		return res.status(400).json({
+			ok: false,
+			message: `Debes enviar una tasa ${label} valida mayor a cero.`,
+		});
+	}
+
+	try {
+		const dayKey = getHistoryDateKey(new Date(), EXCHANGE_RATE_TIMEZONE);
+		const existingRate = await model.findOne({ dayKey });
+
+		if (existingRate) {
+			return res.status(409).json({
+				ok: false,
+				message: `La tasa ${label} del dia ya fue asignada y queda bloqueada hasta el siguiente dia.`,
+				rateType,
+				rate: existingRate.rate,
+				dayKey,
+				timezone: EXCHANGE_RATE_TIMEZONE,
+			});
+		}
+
+		const createdRate = await model.create({
+			dayKey,
+			rate: parsedRate,
+			assignedBy: 'caja',
+			assignedAt: new Date(),
+		});
+
+		io.emit('tasa_actualizada', {
+			rateType,
+			dayKey,
+			rate: createdRate.rate,
+			timezone: EXCHANGE_RATE_TIMEZONE,
+			assignedAt: createdRate.assignedAt,
+		});
+
+		return res.status(201).json({
+			ok: true,
+			message: `Tasa ${label} diaria registrada correctamente.`,
+			rateType,
+			dayKey,
+			rate: createdRate.rate,
+			timezone: EXCHANGE_RATE_TIMEZONE,
+			assignedAt: createdRate.assignedAt,
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: `No se pudo registrar la tasa ${label} diaria.`,
+			error: error.message,
+		});
+	}
 });
 
 app.get('/api/tables/status', async (req, res) => {
