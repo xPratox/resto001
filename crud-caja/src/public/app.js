@@ -8,9 +8,11 @@ const saldoPendiente = document.getElementById('saldoPendiente');
 const mesaSeleccionadaInfo = document.getElementById('mesaSeleccionadaInfo');
 const tasaBcvInput = document.getElementById('tasaBcvInput');
 const guardarTasaBcvButton = document.getElementById('guardarTasaBcv');
+const tasaBcvEditor = document.getElementById('tasaBcvEditor');
 const tasaBcvStatus = document.getElementById('tasaBcvStatus');
 const tasaPesosInput = document.getElementById('tasaPesosInput');
 const guardarTasaPesosButton = document.getElementById('guardarTasaPesos');
+const tasaPesosEditor = document.getElementById('tasaPesosEditor');
 const tasaPesosStatus = document.getElementById('tasaPesosStatus');
 const conversionHint = document.getElementById('conversionHint');
 const paymentWarning = document.getElementById('paymentWarning');
@@ -51,6 +53,15 @@ let canEditBcvRate = true;
 let currentDailyPesoRate = null;
 let currentPesoDayKey = null;
 let canEditPesoRate = true;
+let isBcvLocked = false;
+let isPesoLocked = false;
+
+const EXCHANGE_RATE_STORAGE_KEYS = {
+  bcv: 'resto001:caja:exchange-rate:bcv',
+  pesos: 'resto001:caja:exchange-rate:cop',
+};
+
+const RATE_LOCK_PULSE_MS = 720;
 
 const POLLING_INTERVAL_MS = 10000;
 const DASHBOARD_TIMEZONE = 'America/Caracas';
@@ -126,6 +137,9 @@ function updateCurrentDateTimeLabel() {
   if (!currentDateTime) {
     return;
   }
+
+  maybeUnlockRateForNewDay('bcv');
+  maybeUnlockRateForNewDay('pesos');
 
   const now = new Date();
   const formattedDateTime = new Intl.DateTimeFormat('es-VE', {
@@ -231,6 +245,250 @@ function requestCentral(path, options = {}) {
 
 function requestLocal(path, options = {}) {
   return requestJson(path, options);
+}
+
+function formatShortDate(dateInput) {
+  if (!dateInput) {
+    return '';
+  }
+
+  const rawValue = String(dateInput).trim();
+
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(rawValue)) {
+    return rawValue;
+  }
+
+  if (/^\d{2}-\d{2}-\d{4}$/.test(rawValue)) {
+    return rawValue.replace(/-/g, '/');
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) {
+    const [year, month, day] = rawValue.split('-');
+    return `${day}/${month}/${year}`;
+  }
+
+  const parsedDate = new Date(rawValue);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return '';
+  }
+
+  return new Intl.DateTimeFormat('es-VE', {
+    timeZone: DASHBOARD_TIMEZONE,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(parsedDate);
+}
+
+function getCurrentExchangeDayKey() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: DASHBOARD_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+
+  const year = parts.find((part) => part.type === 'year')?.value;
+  const month = parts.find((part) => part.type === 'month')?.value;
+  const day = parts.find((part) => part.type === 'day')?.value;
+
+  return `${year}-${month}-${day}`;
+}
+
+function isRateExpired(dayKey) {
+  if (!dayKey) {
+    return false;
+  }
+
+  return String(dayKey).trim() !== getCurrentExchangeDayKey();
+}
+
+function buildRateStatusMarkup(type, rate, dayKey) {
+  if (!Number.isFinite(rate) || rate <= 0) {
+    return null;
+  }
+
+  const shortDate = formatShortDate(dayKey);
+  const dateMarkup = shortDate ? `<span class="rate-status-date"> | Fecha: ${shortDate}</span>` : '';
+
+  return [
+    '<span class="rate-lock-icon is-closed" aria-hidden="true"><span class="rate-lock-shackle"></span><span class="rate-lock-body"></span><span class="rate-lock-pulse"></span></span>',
+    `<span class="rate-status-copy">Tasa ${type}: <span class="rate-status-amount">${Number(rate).toFixed(2)}</span>${dateMarkup}</span>`,
+    `<button type="button" class="rate-status-reset" data-rate-type="${type.toLowerCase() === 'cop' ? 'pesos' : 'bcv'}" aria-label="Reiniciar tasa ${type}">✏️</button>`,
+  ].join('');
+}
+
+function persistExchangeRate(type, rate, dayKey) {
+  const storageKey = EXCHANGE_RATE_STORAGE_KEYS[type];
+
+  if (!storageKey) {
+    return;
+  }
+
+  try {
+    if (!Number.isFinite(rate) || rate <= 0) {
+      window.localStorage.removeItem(storageKey);
+      return;
+    }
+
+    window.localStorage.setItem(storageKey, JSON.stringify({
+      rate: Number(rate),
+      dayKey: dayKey || null,
+    }));
+  } catch {
+    // Ignore local persistence failures and keep the UI usable.
+  }
+}
+
+function readPersistedExchangeRate(type) {
+  const storageKey = EXCHANGE_RATE_STORAGE_KEYS[type];
+
+  if (!storageKey) {
+    return null;
+  }
+
+  try {
+    const rawValue = window.localStorage.getItem(storageKey);
+
+    if (!rawValue) {
+      return null;
+    }
+
+    const parsedValue = JSON.parse(rawValue);
+    const rate = Number(parsedValue?.rate);
+    const dayKey = parsedValue?.dayKey || null;
+
+    if (!Number.isFinite(rate) || rate <= 0 || isRateExpired(dayKey)) {
+      window.localStorage.removeItem(storageKey);
+      return null;
+    }
+
+    return {
+      rate,
+      dayKey,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function hydratePersistedExchangeRates() {
+  const persistedBcvRate = readPersistedExchangeRate('bcv');
+  const persistedPesoRate = readPersistedExchangeRate('pesos');
+
+  if (persistedBcvRate) {
+    applyBcvRateState({
+      rate: persistedBcvRate.rate,
+      canEdit: false,
+      dayKey: persistedBcvRate.dayKey,
+    });
+  }
+
+  if (persistedPesoRate) {
+    applyPesosRateState({
+      rate: persistedPesoRate.rate,
+      canEdit: false,
+      dayKey: persistedPesoRate.dayKey,
+    });
+  }
+}
+
+function triggerRateLockPulse(statusElement) {
+  if (!statusElement) {
+    return;
+  }
+
+  statusElement.classList.remove('rate-status-line--pulse');
+  void statusElement.offsetWidth;
+  statusElement.classList.add('rate-status-line--pulse');
+
+  window.setTimeout(() => {
+    statusElement.classList.remove('rate-status-line--pulse');
+  }, RATE_LOCK_PULSE_MS);
+}
+
+function resetPersistedExchangeRate(type) {
+  const storageKey = EXCHANGE_RATE_STORAGE_KEYS[type];
+
+  if (!storageKey) {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(storageKey);
+  } catch {
+    // Ignore storage cleanup errors.
+  }
+}
+
+function maybeUnlockRateForNewDay(type) {
+  if (type === 'bcv') {
+    if (currentBcvDayKey && isRateExpired(currentBcvDayKey)) {
+      resetPersistedExchangeRate('bcv');
+      applyBcvRateState({ rate: null, canEdit: true, dayKey: getCurrentExchangeDayKey() });
+    }
+    return;
+  }
+
+  if (currentPesoDayKey && isRateExpired(currentPesoDayKey)) {
+    resetPersistedExchangeRate('pesos');
+    applyPesosRateState({ rate: null, canEdit: true, dayKey: getCurrentExchangeDayKey() });
+  }
+}
+
+async function editTasaHoy(type) {
+  const currentRate = type === 'bcv' ? currentDailyBcvRate : currentDailyPesoRate;
+  const currentDayKey = type === 'bcv' ? currentBcvDayKey : currentPesoDayKey;
+
+  resetPersistedExchangeRate(type);
+
+  try {
+    await requestCentral(`/api/exchange-rate/today?type=${type}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-resto-module': 'caja',
+      },
+    });
+  } catch (error) {
+    setStatus('Error reiniciando tasa diaria', { type, error: error.message });
+  }
+
+  if (type === 'bcv') {
+    applyBcvRateState({
+      rate: Number.isFinite(currentRate) ? currentRate : null,
+      canEdit: true,
+      dayKey: currentDayKey || getCurrentExchangeDayKey(),
+    });
+    showLiveNotice('Tasa BCV lista para correccion.', 'success');
+    tasaBcvInput?.focus();
+    return;
+  }
+
+  applyPesosRateState({
+    rate: Number.isFinite(currentRate) ? currentRate : null,
+    canEdit: true,
+    dayKey: currentDayKey || getCurrentExchangeDayKey(),
+  });
+  showLiveNotice('Tasa COP lista para correccion.', 'success');
+  tasaPesosInput?.focus();
+}
+
+function toggleRateVisibility({ editorElement, statusElement, canEdit, hasRate }) {
+  const showSummary = !canEdit && hasRate;
+
+  if (editorElement) {
+    editorElement.classList.toggle('is-visible', !showSummary);
+    editorElement.classList.toggle('is-hidden', showSummary);
+    editorElement.setAttribute('aria-hidden', showSummary ? 'true' : 'false');
+  }
+
+  if (statusElement) {
+    statusElement.classList.toggle('is-visible', showSummary);
+    statusElement.classList.toggle('is-hidden', !showSummary);
+    statusElement.setAttribute('aria-hidden', showSummary ? 'false' : 'true');
+  }
 }
 
 function normalizePedido(order) {
@@ -423,14 +681,16 @@ function refreshBcvStatusLabel() {
     return;
   }
 
-  if (!Number.isFinite(currentDailyBcvRate) || currentDailyBcvRate <= 0) {
-    tasaBcvStatus.textContent = 'Tasa BCV del dia: sin asignar';
-    return;
-  }
+  const hasRate = Number.isFinite(currentDailyBcvRate) && currentDailyBcvRate > 0;
+  tasaBcvStatus.innerHTML = buildRateStatusMarkup('BCV', currentDailyBcvRate, currentBcvDayKey) || '';
+  isBcvLocked = !canEditBcvRate && hasRate;
 
-  const dayLabel = currentBcvDayKey ? ` (${currentBcvDayKey})` : '';
-  const lockLabel = canEditBcvRate ? '' : ' · bloqueada hasta mañana';
-  tasaBcvStatus.textContent = `Tasa BCV del dia: ${currentDailyBcvRate.toFixed(2)}${dayLabel}${lockLabel}`;
+  toggleRateVisibility({
+    editorElement: tasaBcvEditor,
+    statusElement: tasaBcvStatus,
+    canEdit: !isBcvLocked,
+    hasRate,
+  });
 }
 
 function refreshPesosStatusLabel() {
@@ -438,54 +698,72 @@ function refreshPesosStatusLabel() {
     return;
   }
 
-  if (!Number.isFinite(currentDailyPesoRate) || currentDailyPesoRate <= 0) {
-    tasaPesosStatus.textContent = 'Tasa COP del dia: sin asignar';
-    return;
-  }
+  const hasRate = Number.isFinite(currentDailyPesoRate) && currentDailyPesoRate > 0;
+  tasaPesosStatus.innerHTML = buildRateStatusMarkup('COP', currentDailyPesoRate, currentPesoDayKey) || '';
+  isPesoLocked = !canEditPesoRate && hasRate;
 
-  const dayLabel = currentPesoDayKey ? ` (${currentPesoDayKey})` : '';
-  const lockLabel = canEditPesoRate ? '' : ' · bloqueada hasta mañana';
-  tasaPesosStatus.textContent = `Tasa COP del dia: ${currentDailyPesoRate.toFixed(2)}${dayLabel}${lockLabel}`;
+  toggleRateVisibility({
+    editorElement: tasaPesosEditor,
+    statusElement: tasaPesosStatus,
+    canEdit: !isPesoLocked,
+    hasRate,
+  });
 }
 
-function applyBcvRateState({ rate, canEdit, dayKey }) {
+function applyBcvRateState({ rate, canEdit, dayKey, animateLock = false }) {
   currentDailyBcvRate = Number.isFinite(Number(rate)) ? Number(rate) : null;
   currentBcvDayKey = dayKey || null;
   canEditBcvRate = Boolean(canEdit);
+  isBcvLocked = !canEditBcvRate && Number.isFinite(currentDailyBcvRate) && currentDailyBcvRate > 0;
 
   if (tasaBcvInput) {
     tasaBcvInput.disabled = !canEdit;
-    if (!canEdit && Number.isFinite(currentDailyBcvRate)) {
+    if (Number.isFinite(currentDailyBcvRate)) {
       tasaBcvInput.value = currentDailyBcvRate.toFixed(2);
+    } else if (canEdit) {
+      tasaBcvInput.value = '';
     }
   }
 
   if (guardarTasaBcvButton) {
     guardarTasaBcvButton.disabled = !canEdit;
-    guardarTasaBcvButton.textContent = canEdit ? 'Guardar' : 'Bloqueada hoy';
+    guardarTasaBcvButton.textContent = 'Guardar';
   }
 
+  persistExchangeRate('bcv', currentDailyBcvRate, currentBcvDayKey);
   refreshBcvStatusLabel();
+
+  if (!canEditBcvRate && Number.isFinite(currentDailyBcvRate) && animateLock) {
+    triggerRateLockPulse(tasaBcvStatus);
+  }
 }
 
-function applyPesosRateState({ rate, canEdit, dayKey }) {
+function applyPesosRateState({ rate, canEdit, dayKey, animateLock = false }) {
   currentDailyPesoRate = Number.isFinite(Number(rate)) ? Number(rate) : null;
   currentPesoDayKey = dayKey || null;
   canEditPesoRate = Boolean(canEdit);
+  isPesoLocked = !canEditPesoRate && Number.isFinite(currentDailyPesoRate) && currentDailyPesoRate > 0;
 
   if (tasaPesosInput) {
     tasaPesosInput.disabled = !canEdit;
-    if (!canEdit && Number.isFinite(currentDailyPesoRate)) {
+    if (Number.isFinite(currentDailyPesoRate)) {
       tasaPesosInput.value = currentDailyPesoRate.toFixed(2);
+    } else if (canEdit) {
+      tasaPesosInput.value = '';
     }
   }
 
   if (guardarTasaPesosButton) {
     guardarTasaPesosButton.disabled = !canEdit;
-    guardarTasaPesosButton.textContent = canEdit ? 'Guardar' : 'Bloqueada hoy';
+    guardarTasaPesosButton.textContent = 'Guardar';
   }
 
+  persistExchangeRate('pesos', currentDailyPesoRate, currentPesoDayKey);
   refreshPesosStatusLabel();
+
+  if (!canEditPesoRate && Number.isFinite(currentDailyPesoRate) && animateLock) {
+    triggerRateLockPulse(tasaPesosStatus);
+  }
 }
 
 async function loadBcvRate() {
@@ -528,6 +806,7 @@ async function saveBcvRate() {
     rate: data.rate,
     canEdit: false,
     dayKey: data.dayKey,
+    animateLock: true,
   });
 
   syncPaymentFormState();
@@ -554,6 +833,7 @@ async function savePesosRate() {
     rate: data.rate,
     canEdit: false,
     dayKey: data.dayKey,
+    animateLock: true,
   });
 
   syncPaymentFormState();
@@ -1010,6 +1290,26 @@ guardarTasaPesosButton?.addEventListener('click', async () => {
   }
 });
 
+tasaBcvStatus?.addEventListener('click', async (event) => {
+  const resetButton = event.target.closest('.rate-status-reset');
+
+  if (!resetButton) {
+    return;
+  }
+
+  await editTasaHoy('bcv');
+});
+
+tasaPesosStatus?.addEventListener('click', async (event) => {
+  const resetButton = event.target.closest('.rate-status-reset');
+
+  if (!resetButton) {
+    return;
+  }
+
+  await editTasaHoy('pesos');
+});
+
 openReporteBtn.addEventListener('click', async () => {
   const isHidden = reporteSection.classList.contains('hidden');
   if (isHidden) {
@@ -1028,6 +1328,7 @@ window.addEventListener('pagehide', cleanupRealtimeResources);
 
 (async function init() {
   updateSystemStatusLabel(false);
+  hydratePersistedExchangeRates();
   syncPaymentFormState();
   ensureElapsedTimer();
   ensureDateTimeTimer();

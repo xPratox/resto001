@@ -77,22 +77,37 @@
                   <option value="COP">COP</option>
                 </select>
               </label>
-              <div class="rate-compact-wrap">
-                <p class="rate-compact-title">Tasa BCV dolar</p>
-                <div class="rate-compact-row">
-                  <input type="text" id="tasaBcvInput" class="rate-input-compact" inputmode="decimal" placeholder="Ej. 36.50" autocomplete="off" />
-                  <button type="button" id="guardarTasaBcv" class="secondary rate-button-compact">Guardar</button>
+              <section class="rate-panel" aria-label="Tasas del dia">
+                <div class="rate-panel-head">
+                  <p class="rate-panel-title">Tasas del Dia</p>
                 </div>
-                <p id="tasaBcvStatus" class="form-helper">Tasa BCV del dia: sin asignar</p>
-              </div>
-              <div class="rate-compact-wrap">
-                <p class="rate-compact-title">Tasa COP por USD</p>
-                <div class="rate-compact-row">
-                  <input type="text" id="tasaPesosInput" class="rate-input-compact" inputmode="decimal" placeholder="Ej. 1000.00" autocomplete="off" />
-                  <button type="button" id="guardarTasaPesos" class="secondary rate-button-compact">Guardar</button>
+                <div class="rate-panel-grid">
+                  <div class="rate-compact-wrap">
+                    <div id="tasaBcvEditor" class="rate-compact-row rate-view is-visible">
+                      <span class="rate-lock-icon is-open" aria-hidden="true">
+                        <span class="rate-lock-shackle"></span>
+                        <span class="rate-lock-body"></span>
+                      </span>
+                      <span class="rate-inline-label">BCV</span>
+                      <input type="text" id="tasaBcvInput" class="rate-input-compact" inputmode="decimal" placeholder="Ej. 36.50" autocomplete="off" />
+                      <button type="button" id="guardarTasaBcv" class="secondary rate-button-compact">Guardar</button>
+                    </div>
+                    <p id="tasaBcvStatus" class="rate-status-line rate-view is-hidden" aria-live="polite"></p>
+                  </div>
+                  <div class="rate-compact-wrap">
+                    <div id="tasaPesosEditor" class="rate-compact-row rate-view is-visible">
+                      <span class="rate-lock-icon is-open" aria-hidden="true">
+                        <span class="rate-lock-shackle"></span>
+                        <span class="rate-lock-body"></span>
+                      </span>
+                      <span class="rate-inline-label">COP</span>
+                      <input type="text" id="tasaPesosInput" class="rate-input-compact" inputmode="decimal" placeholder="Ej. 1000.00" autocomplete="off" />
+                      <button type="button" id="guardarTasaPesos" class="secondary rate-button-compact">Guardar</button>
+                    </div>
+                    <p id="tasaPesosStatus" class="rate-status-line rate-view is-hidden" aria-live="polite"></p>
+                  </div>
                 </div>
-                <p id="tasaPesosStatus" class="form-helper">Tasa COP del dia: sin asignar</p>
-              </div>
+              </section>
               <p id="saldoPendiente" class="form-helper">Pendiente por cobrar: $0.00</p>
               <p id="mesaSeleccionadaInfo" class="form-helper">Mesa seleccionada: --</p>
               <p id="conversionHint" class="form-helper">Equivalente: BS -- | COP --</p>

@@ -747,6 +747,50 @@ app.put('/api/exchange-rate/today', async (req, res) => {
 	}
 });
 
+app.delete('/api/exchange-rate/today', async (req, res) => {
+	const moduleName = String(req.headers['x-resto-module'] || '').trim().toLowerCase();
+	const rateType = normalizeRateType(req.query?.type || req.body?.type);
+	const { model, label } = getRateModelByType(rateType);
+
+	if (moduleName !== 'caja') {
+		return res.status(403).json({
+			ok: false,
+			message: `Solo caja puede reiniciar la tasa ${label} diaria.`,
+		});
+	}
+
+	try {
+		const dayKey = getHistoryDateKey(new Date(), EXCHANGE_RATE_TIMEZONE);
+		const deletedRate = await model.findOneAndDelete({ dayKey });
+
+		io.emit('tasa_actualizada', {
+			rateType,
+			dayKey,
+			rate: null,
+			reset: true,
+			timezone: EXCHANGE_RATE_TIMEZONE,
+		});
+
+		return res.json({
+			ok: true,
+			message: deletedRate
+				? `Tasa ${label} diaria reiniciada correctamente.`
+				: `No existia una tasa ${label} asignada para hoy.`,
+			rateType,
+			dayKey,
+			rate: null,
+			canEdit: true,
+			timezone: EXCHANGE_RATE_TIMEZONE,
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: `No se pudo reiniciar la tasa ${label} diaria.`,
+			error: error.message,
+		});
+	}
+});
+
 app.get('/api/tables/status', async (req, res) => {
 	try {
 		await Promise.all(
