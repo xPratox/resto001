@@ -594,7 +594,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
                       onClick={() => handleTableSelect(table)}
                       className={`min-h-[132px] rounded-3xl border p-5 text-left transition duration-200 ${
                         isCleaning
-                          ? 'border-[#3B82F6] bg-[#3B82F6] text-snowText shadow-glow'
+                          ? 'border-warning bg-warning text-deepCarbon shadow-glow'
                           : occupied
                             ? 'border-sunsetOrange bg-sunsetOrange text-deepCarbon shadow-glow'
                           : selected
@@ -805,7 +805,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
               type="button"
               onClick={handleReleaseTable}
               disabled={isReleasingTable}
-              className="w-full rounded-2xl bg-[#3B82F6] px-4 py-3 text-sm font-semibold uppercase tracking-[0.2em] text-snowText transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-carbonLine disabled:text-slate-400"
+              className="w-full rounded-2xl bg-warning px-5 py-4 text-sm font-semibold uppercase tracking-[0.2em] text-deepCarbon transition hover:brightness-110 disabled:cursor-not-allowed disabled:bg-carbonLine disabled:text-slate-400"
             >
               {isReleasingTable ? 'Liberando mesa...' : 'Mesa limpia / liberar mesa'}
             </button>
@@ -986,10 +986,10 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
             <span>Status</span>
             <span className={`rounded-full px-3 py-1 font-semibold ${
               currentOrder.status === 'limpieza'
-                ? 'bg-[#3B82F6] text-snowText'
+                ? 'bg-warning text-deepCarbon'
                 : currentOrder.status === 'pagado'
-                  ? 'bg-emerald-500 text-snowText'
-                  : 'bg-sunset text-black'
+                  ? 'bg-success text-deepCarbon'
+                  : 'bg-info text-deepCarbon'
             }`}>
               {currentOrder.status}
             </span>

@@ -14,7 +14,7 @@ export default function TabLayout() {
           backgroundColor: RestoBrandTheme.background.slateAccent,
           borderTopColor: RestoBrandTheme.border.subtle,
         },
-        tabBarActiveTintColor: RestoBrandTheme.accent.sunsetOrange,
+        tabBarActiveTintColor: RestoBrandTheme.accent.primary,
         tabBarInactiveTintColor: RestoBrandTheme.text.metallicSoft,
         headerShown: false,
         tabBarButton: HapticTab,

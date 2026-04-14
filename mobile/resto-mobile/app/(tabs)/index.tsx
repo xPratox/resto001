@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RestoBrandTheme } from '@/constants/theme';
-import { API_BASE_URL } from '@/lib/api';
+import { API_BASE_URL, SOCKET_URL } from '@/lib/api';
 import { restoSocket } from '@/lib/socket';
 
 type MenuItem = {
@@ -83,6 +83,9 @@ type DailyExchangeRateResponse = {
   rate: number | null;
 };
 
+type NormalizedOrderStatus = CurrentOrder['status'];
+type NormalizedTableStatus = TableStatus['status'];
+
 const TABLE_DEFINITIONS: TableDefinition[] = [
   { table: 'Mesa 1', section: 'Sala', capacity: 4 },
   { table: 'Mesa 2', section: 'Sala', capacity: 4 },
@@ -112,6 +115,30 @@ const initialOrder: CurrentOrder = {
   status: 'pendiente',
 };
 
+function normalizeOrderStatus(status: unknown): NormalizedOrderStatus {
+  if (status === 'limpieza' || status === 'pagado' || status === 'pendiente') {
+    return status;
+  }
+
+  if (status === 'en cocina' || status === 'en_cocina') {
+    return 'en cocina';
+  }
+
+  return 'pendiente';
+}
+
+function normalizeTableWorkflowStatus(status: unknown): NormalizedTableStatus {
+  if (status === 'disponible' || status === 'pendiente' || status === 'limpieza' || status === 'pagado') {
+    return status;
+  }
+
+  if (status === 'en cocina' || status === 'en_cocina') {
+    return 'en cocina';
+  }
+
+  return 'disponible';
+}
+
 function normalizeOrder(order: CurrentOrder): CurrentOrder {
   return {
     _id: order._id,
@@ -125,7 +152,7 @@ function normalizeOrder(order: CurrentOrder): CurrentOrder {
       note: item.note || 'Sin notas',
     })),
     total: Number(order.total ?? 0),
-    status: order.status ?? 'pendiente',
+    status: normalizeOrderStatus(order.status),
   };
 }
 
@@ -153,20 +180,7 @@ function normalizeMenuItem(item: BackendMenuItem, index: number): MenuItem | nul
 function normalizeTableStatus(table: BackendTableStatus): TableStatus | null {
   const tableName = typeof table.table === 'string' ? table.table : typeof table.mesa === 'string' ? table.mesa : '';
   const tableDefinition = TABLE_DEFINITIONS.find((item) => item.table === tableName);
-  const status =
-    table.status === 'disponible' ||
-    table.status === 'pendiente' ||
-    table.status === 'en cocina' ||
-    table.status === 'limpieza' ||
-    table.status === 'pagado'
-      ? table.status
-      : table.estado === 'disponible' ||
-          table.estado === 'pendiente' ||
-          table.estado === 'en cocina' ||
-          table.estado === 'limpieza' ||
-          table.estado === 'pagado'
-        ? table.estado
-        : 'disponible';
+  const status = normalizeTableWorkflowStatus(table.status ?? table.estado);
 
   if (!tableName) {
     return null;
@@ -239,7 +253,7 @@ export default function HomeScreen() {
   const [isSocketConnected, setIsSocketConnected] = useState(restoSocket.connected);
   const releaseGuardTablesRef = useRef<Set<string>>(new Set());
 
-  const lockTableAsAvailable = useCallback((tables: TableStatus[], tableName: string) => {
+  const lockTableAsAvailable = useCallback((tables: TableStatus[], tableName: string): TableStatus[] => {
     return tables.map((table) =>
       table.table === tableName
         ? {
@@ -430,6 +444,13 @@ export default function HomeScreen() {
       setIsSocketConnected(false);
     };
 
+    const handleSocketConnectError = (error: Error) => {
+      setIsSocketConnected(false);
+      setErrorMessage(
+        `No se pudo enlazar el socket con ${SOCKET_URL}. Verifica la IP privada del backend y que el puerto 5000 este accesible. ${error.message}`,
+      );
+    };
+
     if (!restoSocket.connected) {
       restoSocket.connect();
     }
@@ -471,7 +492,9 @@ export default function HomeScreen() {
 
     restoSocket.on('connect', handleSocketConnect);
     restoSocket.on('disconnect', handleSocketDisconnect);
+    restoSocket.on('connect_error', handleSocketConnectError);
     restoSocket.on('orden_actualizada', handleOrderUpdated);
+    restoSocket.on('CAMBIO_ESTADO_MESA', handleTableUpdated);
     restoSocket.on('mesa_liberada', handleTableReleased);
     restoSocket.on('mesa_ocupada', handleTableOccupied);
     restoSocket.on('mesa_en_limpieza', handleTableCleaning);
@@ -481,7 +504,9 @@ export default function HomeScreen() {
     return () => {
       restoSocket.off('connect', handleSocketConnect);
       restoSocket.off('disconnect', handleSocketDisconnect);
+      restoSocket.off('connect_error', handleSocketConnectError);
       restoSocket.off('orden_actualizada', handleOrderUpdated);
+      restoSocket.off('CAMBIO_ESTADO_MESA', handleTableUpdated);
       restoSocket.off('mesa_liberada', handleTableReleased);
       restoSocket.off('mesa_ocupada', handleTableOccupied);
       restoSocket.off('mesa_en_limpieza', handleTableCleaning);
@@ -839,6 +864,8 @@ export default function HomeScreen() {
 
       const response = await axios.post<{ order: CurrentOrder }>(`${API_BASE_URL}/api/orders`, payload);
       const normalizedOrder = normalizeOrder(response.data.order);
+      console.log('Pedido emitido:', response.data.order);
+
       setCurrentOrder(normalizedOrder);
 
       const successCopy = '¡Pedido procesado con éxito!';
@@ -921,7 +948,7 @@ export default function HomeScreen() {
             <FontAwesome5
               name={isSocketConnected ? 'link' : 'unlink'}
               size={12}
-              color={isSocketConnected ? '#10B981' : '#F59E0B'}
+              color={isSocketConnected ? brand.status.success : brand.status.warning}
             />
             <Text style={styles.connectionText}>{isSocketConnected ? 'Enlazado con caja' : 'Conectando con caja'}</Text>
           </View>
@@ -1169,7 +1196,7 @@ export default function HomeScreen() {
                 disabled={isReleasingCleaningTable}
                 style={[styles.modalPrimaryAction, isReleasingCleaningTable && styles.disabledAction]}>
                 <Text style={styles.modalPrimaryText}>
-                  {isReleasingCleaningTable ? 'Liberando mesa...' : 'Liberar Mesa Ahora'}
+                  {isReleasingCleaningTable ? 'Liberando mesa...' : 'Mesa Limpia / Liberar Mesa'}
                 </Text>
               </Pressable>
 
@@ -1294,7 +1321,7 @@ const styles = StyleSheet.create({
     borderColor: '#334155',
   },
   overline: {
-    color: '#FF6B35',
+    color: brand.accent.primary,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 2,
@@ -1338,8 +1365,8 @@ const styles = StyleSheet.create({
     borderColor: '#334155',
   },
   stepPillActive: {
-    backgroundColor: '#FF6B35',
-    borderColor: '#FF6B35',
+    backgroundColor: brand.accent.primary,
+    borderColor: brand.accent.primary,
   },
   stepLabel: {
     textAlign: 'center',
@@ -1382,24 +1409,24 @@ const styles = StyleSheet.create({
     minHeight: 46,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#334155',
-    backgroundColor: '#0F172A',
+    borderColor: brand.border.subtle,
+    backgroundColor: brand.surface.base,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 12,
+    paddingHorizontal: 16,
   },
   sectionTabActive: {
-    borderColor: '#FF6B35',
-    backgroundColor: '#FF6B35',
+    borderColor: brand.accent.primary,
+    backgroundColor: brand.accent.primary,
   },
   sectionTabText: {
-    color: '#F8FAFC',
+    color: brand.text.primary,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.8,
   },
   sectionTabTextActive: {
-    color: '#000000',
+    color: brand.text.onAccent,
   },
   tableGrid: {
     flexDirection: 'row',
@@ -1410,27 +1437,27 @@ const styles = StyleSheet.create({
     width: '48%',
     minHeight: 118,
     borderRadius: 16,
-    backgroundColor: '#1E293B',
+    backgroundColor: brand.surface.card,
     borderWidth: 1,
-    borderColor: '#334155',
+    borderColor: brand.border.subtle,
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    padding: 16,
+    padding: 18,
   },
   giantButtonLarge: {
     width: '100%',
     minHeight: 154,
   },
   giantButtonOccupied: {
-    backgroundColor: '#FF6B35',
-    borderColor: '#FF6B35',
+    backgroundColor: brand.accent.primary,
+    borderColor: brand.accent.primary,
   },
   giantButtonCleaning: {
-    backgroundColor: brand.status.cleaning,
-    borderColor: brand.status.cleaning,
+    backgroundColor: brand.status.warning,
+    borderColor: brand.status.warning,
   },
   giantButtonSelected: {
-    borderColor: '#FF6B35',
+    borderColor: brand.accent.primary,
   },
   tableButtonHeader: {
     width: '100%',
@@ -1439,44 +1466,44 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tableStatusBadge: {
-    color: '#CBD5E1',
+    color: brand.text.secondary,
     fontSize: 11,
     fontWeight: '800',
     textTransform: 'uppercase',
     letterSpacing: 0.8,
   },
   tableStatusBadgeOccupied: {
-    color: '#000000',
+    color: brand.text.onAccent,
   },
   giantButtonLabel: {
-    color: '#F8FAFC',
+    color: brand.text.primary,
     fontSize: 22,
     fontWeight: '800',
   },
   giantButtonLabelOccupied: {
-    color: '#000000',
+    color: brand.text.onAccent,
   },
   giantButtonMeta: {
-    color: '#CBD5E1',
+    color: brand.text.secondary,
     fontSize: 13,
     fontWeight: '600',
   },
   giantButtonMetaOccupied: {
-    color: '#000000',
+    color: brand.text.onAccent,
   },
   primaryAction: {
     minHeight: 56,
     borderRadius: 12,
-    backgroundColor: '#FF6B35',
+    backgroundColor: brand.accent.primary,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
   },
   disabledAction: {
-    backgroundColor: '#334155',
+    backgroundColor: brand.border.subtle,
   },
   primaryActionText: {
-    color: '#000000',
+    color: brand.text.onAccent,
     fontSize: 17,
     fontWeight: '800',
   },
@@ -1511,7 +1538,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   menuSectionTitle: {
-    color: '#FF6B35',
+    color: brand.accent.primary,
     fontSize: 18,
     fontWeight: '800',
     marginTop: 4,
@@ -1544,7 +1571,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   menuPrice: {
-    color: '#FF6B35',
+    color: brand.accent.primary,
     fontSize: 18,
     fontWeight: '800',
   },
@@ -1583,11 +1610,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 14,
     paddingVertical: 10,
     borderWidth: 1,
-    borderColor: '#FF6B35',
-    backgroundColor: '#1E293B',
+    borderColor: brand.accent.secondary,
+    backgroundColor: brand.surface.card,
   },
   viewActiveOrderButtonText: {
-    color: '#FF6B35',
+    color: brand.accent.secondary,
     fontSize: 13,
     fontWeight: '700',
     textTransform: 'uppercase',
@@ -1638,7 +1665,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   orderItemPrice: {
-    color: '#FF6B35',
+    color: brand.accent.primary,
     fontWeight: '800',
     fontSize: 16,
   },
@@ -1669,26 +1696,26 @@ const styles = StyleSheet.create({
   },
   successBanner: {
     borderRadius: 20,
-    backgroundColor: '#1E293B',
+    backgroundColor: brand.surface.card,
     borderWidth: 1,
-    borderColor: '#FF6B35',
+    borderColor: brand.status.success,
     padding: 16,
   },
   successText: {
-    color: '#F8FAFC',
+    color: brand.text.primary,
     fontSize: 16,
     fontWeight: '800',
     textAlign: 'center',
   },
   errorBanner: {
     borderRadius: 20,
-    backgroundColor: '#1E293B',
+    backgroundColor: brand.surface.card,
     borderWidth: 1,
-    borderColor: '#FF6B35',
+    borderColor: brand.status.danger,
     padding: 16,
   },
   errorText: {
-    color: '#F8FAFC',
+    color: brand.text.primary,
     fontSize: 15,
     fontWeight: '700',
     textAlign: 'center',
@@ -1737,8 +1764,8 @@ const styles = StyleSheet.create({
     borderColor: '#334155',
   },
   quickNoteChipActive: {
-    backgroundColor: '#FF6B35',
-    borderColor: '#FF6B35',
+    backgroundColor: brand.accent.primary,
+    borderColor: brand.accent.primary,
   },
   quickNoteText: {
     color: '#F8FAFC',
@@ -1769,7 +1796,7 @@ const styles = StyleSheet.create({
   modalPrimaryAction: {
     minHeight: 64,
     borderRadius: 14,
-    backgroundColor: '#FF6B35',
+    backgroundColor: brand.accent.primary,
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 20,

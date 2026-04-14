@@ -107,7 +107,7 @@ exports.createPago = async (req, res, next) => {
     });
 
     if (pago.estado === 'completado' || pago.estado === 'confirmado') {
-      pedido.estado = 'pagado';
+      pedido.estado = 'limpieza';
       await pedido.save();
     }
 
@@ -174,7 +174,7 @@ exports.updatePago = async (req, res, next) => {
     await pago.save();
 
     if (pago.estado === 'completado' || pago.estado === 'confirmado') {
-      await Pedido.findByIdAndUpdate(pago.pedidoId, { estado: 'pagado' });
+      await Pedido.findByIdAndUpdate(pago.pedidoId, { estado: 'limpieza' });
     }
 
     return res.status(200).json(pago);

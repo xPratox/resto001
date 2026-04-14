@@ -21,6 +21,7 @@ Ademas, integra sincronizacion Real-Time para mantener la informacion operativa 
 
 - `/backend`: backend principal y servicios de negocio.
 - `/crud-caja`: modulo web de caja para gestion operativa y administrativa.
+- `/cocina-web`: estacion web de cocina en tiempo real para despacho de comandas.
 - `/mesonero-web`: estacion web para mesonero.
 - `/mobile/resto-mobile`: aplicacion movil para operacion en sala.
 
@@ -29,6 +30,7 @@ Ademas, integra sincronizacion Real-Time para mantener la informacion operativa 
 - Mesonero Movil
 - Mesonero Web
 - Caja Web
+- Cocina Web
 
 ## Funcionalidades Generales
 

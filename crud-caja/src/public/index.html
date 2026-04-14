@@ -6,7 +6,7 @@
     <title>Caja - Panel Web</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Roboto+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -16,19 +16,46 @@
     <main class="layout">
       <header class="hero">
         <div class="hero-head">
-          <div>
+          <div class="hero-identity">
             <p class="eyebrow">Caja</p>
             <h1>Panel de cobros</h1>
             <p class="subtitle">Control en tiempo real para pagos, limpieza y trazabilidad de mesas.</p>
           </div>
-          <div class="sync-cluster">
-            <div class="sync-pill">
-              <span class="sync-dot"></span>
-              <span id="systemStatus">Sistema en linea - IP: --</span>
+          <section class="hero-rates" aria-label="Tasas del dia">
+            <div class="rate-compact-wrap rate-compact-wrap--pill">
+              <div id="tasaBcvEditor" class="rate-compact-row rate-compact-row--pill rate-view is-visible">
+                <span class="rate-lock-icon is-open" aria-hidden="true">
+                  <span class="rate-lock-shackle"></span>
+                  <span class="rate-lock-body"></span>
+                </span>
+                <span class="rate-inline-label">BCV</span>
+                <input type="text" id="tasaBcvInput" class="rate-input-compact" inputmode="decimal" placeholder="477.62" autocomplete="off" />
+                <button type="button" id="guardarTasaBcv" class="secondary rate-button-compact">Guardar</button>
+              </div>
+              <p id="tasaBcvStatus" class="rate-status-line rate-status-line--pill rate-view is-hidden" aria-live="polite"></p>
             </div>
-            <p id="currentDateTime" class="sync-secondary">Fecha y hora: --</p>
-            <p id="lastUpdated" class="last-updated">Sincronizando pedidos...</p>
-            <p id="lastOrderReceived" class="sync-secondary">Ultimo pedido recibido: esperando evento...</p>
+            <div class="rate-compact-wrap rate-compact-wrap--pill">
+              <div id="tasaPesosEditor" class="rate-compact-row rate-compact-row--pill rate-view is-visible">
+                <span class="rate-lock-icon is-open" aria-hidden="true">
+                  <span class="rate-lock-shackle"></span>
+                  <span class="rate-lock-body"></span>
+                </span>
+                <span class="rate-inline-label">COP</span>
+                <input type="text" id="tasaPesosInput" class="rate-input-compact" inputmode="decimal" placeholder="3700" autocomplete="off" />
+                <button type="button" id="guardarTasaPesos" class="secondary rate-button-compact">Guardar</button>
+              </div>
+              <p id="tasaPesosStatus" class="rate-status-line rate-status-line--pill rate-view is-hidden" aria-live="polite"></p>
+            </div>
+          </section>
+          <div class="sync-cluster sync-cluster--header">
+            <div class="sync-pill sync-pill--header">
+              <span class="sync-dot"></span>
+              <span id="systemStatus" class="status-primary">Sistema en linea</span>
+              <span id="systemHost" class="system-host status-accent">--</span>
+            </div>
+            <p id="currentDateTime" class="sync-secondary sync-secondary--header sync-secondary--time">--</p>
+            <p id="lastOrderReceived" class="sync-secondary sync-secondary--header sync-secondary--order">Ultimo pedido: --</p>
+            <p id="lastUpdated" class="hidden">Sincronizando pedidos...</p>
           </div>
         </div>
         <p id="liveNotice" class="live-notice hidden"></p>
@@ -82,44 +109,12 @@
                   <option value="COP">COP</option>
                 </select>
               </label>
-              <section class="rate-panel" aria-label="Tasas del dia">
-                <div class="rate-panel-head">
-                  <p class="rate-panel-title">Tasas del Dia</p>
-                </div>
-                <div class="rate-panel-grid">
-                  <div class="rate-compact-wrap">
-                    <div id="tasaBcvEditor" class="rate-compact-row rate-view is-visible">
-                      <span class="rate-lock-icon is-open" aria-hidden="true">
-                        <span class="rate-lock-shackle"></span>
-                        <span class="rate-lock-body"></span>
-                      </span>
-                      <span class="rate-inline-label">BCV</span>
-                      <input type="text" id="tasaBcvInput" class="rate-input-compact" inputmode="decimal" placeholder="Ej. 36.50" autocomplete="off" />
-                      <button type="button" id="guardarTasaBcv" class="secondary rate-button-compact">Guardar</button>
-                    </div>
-                    <p id="tasaBcvStatus" class="rate-status-line rate-view is-hidden" aria-live="polite"></p>
-                  </div>
-                  <div class="rate-compact-wrap">
-                    <div id="tasaPesosEditor" class="rate-compact-row rate-view is-visible">
-                      <span class="rate-lock-icon is-open" aria-hidden="true">
-                        <span class="rate-lock-shackle"></span>
-                        <span class="rate-lock-body"></span>
-                      </span>
-                      <span class="rate-inline-label">COP</span>
-                      <input type="text" id="tasaPesosInput" class="rate-input-compact" inputmode="decimal" placeholder="Ej. 1000.00" autocomplete="off" />
-                      <button type="button" id="guardarTasaPesos" class="secondary rate-button-compact">Guardar</button>
-                    </div>
-                    <p id="tasaPesosStatus" class="rate-status-line rate-view is-hidden" aria-live="polite"></p>
-                  </div>
-                </div>
-              </section>
               <p id="saldoPendiente" class="form-helper">Pendiente por cobrar: $0.00</p>
               <p id="mesaSeleccionadaInfo" class="form-helper">Mesa seleccionada: --</p>
               <p id="conversionHint" class="form-helper">Equivalente: BS -- | COP --</p>
               <p id="paymentWarning" class="form-warning hidden">Monto excede el total</p>
               <button type="submit">Registrar pago</button>
             </form>
-
           </article>
         </aside>
 
@@ -132,36 +127,127 @@
                 <p class="subtitle-inline">Vista central de mesas, clientes y montos sincronizados en tiempo real</p>
               </div>
               <div class="toolbar-actions">
-                <button id="openReporte" class="secondary">Reporte</button>
+                <button id="openReporte" class="secondary analytics-toggle-btn" aria-expanded="false">👁️ Ver Reportes</button>
               </div>
             </div>
             <div id="pedidosList" class="monitor-grid"></div>
           </section>
+        </div>
+      </section>
 
-          <section class="card full hidden" id="reporteSection">
-            <div class="toolbar toolbar-monitor">
-              <div>
-                <p class="section-kicker">Analitica</p>
-                <h2>Reporte de Ventas</h2>
+      <div id="reportBlock" class="report-block hidden" aria-hidden="true">
+        <div id="reportDivider" class="section-divider">
+          <span class="section-divider-line"></span>
+          <span class="section-divider-label">Analitica</span>
+          <span class="section-divider-line"></span>
+        </div>
+
+        <section class="card full" id="reporteSection">
+          <div class="toolbar toolbar-monitor">
+            <div>
+              <p class="section-kicker">Analitica</p>
+              <h2>Reporte de Ventas</h2>
+              <p class="subtitle-inline">Dashboard operativo con tendencias, metodos de pago y trazabilidad de transacciones.</p>
+            </div>
+            <div class="report-toolbar-actions">
+              <div id="reportRangeFilter" class="report-filter-group" role="group" aria-label="Filtrar reporte por fecha">
+                <button type="button" class="report-filter-chip is-active" data-range="today">Hoy</button>
+                <button type="button" class="report-filter-chip" data-range="yesterday">Ayer</button>
+                <button type="button" class="report-filter-chip" data-range="last7days">Ultimos 7 dias</button>
               </div>
               <button id="reloadReporte" class="secondary">Refrescar reporte</button>
             </div>
-            <div class="report-summary">
-              <article class="report-total-card">
-                <p class="report-label">Resumen del dia</p>
-                <p id="reportTotal" class="report-total-amount">$0.00</p>
-                <p id="reportMeta" class="report-meta">0 pedidos pagados hoy</p>
-              </article>
-              <div id="reportDailyCards" class="report-days"></div>
+          </div>
+
+          <div class="report-summary-grid">
+            <article class="report-kpi-card report-kpi-card--sales">
+              <p class="report-label">Ventas</p>
+              <p id="reportTotal" class="report-total-amount">$0.00</p>
+              <p id="reportMeta" class="report-meta">0 pedidos pagados hoy</p>
+              <div class="report-equivalents">
+                <div>
+                  <span class="report-mini-label">Bs</span>
+                  <strong id="reportTotalBs" class="report-mini-value">Bs 0.00</strong>
+                </div>
+                <div>
+                  <span class="report-mini-label">COP</span>
+                  <strong id="reportTotalCop" class="report-mini-value">COP 0</strong>
+                </div>
+              </div>
+            </article>
+
+            <article class="report-kpi-card">
+              <p class="report-label">Eficiencia</p>
+              <p id="reportAvgTicket" class="report-kpi-value">$0.00</p>
+              <p class="report-meta">Ticket promedio por orden pagada</p>
+            </article>
+
+            <article class="report-kpi-card">
+              <p class="report-label">Volumen</p>
+              <p id="reportVolumeValue" class="report-kpi-value">0 ordenes</p>
+              <p id="reportCleaningMeta" class="report-meta">0% de mesas pasaron por limpieza</p>
+            </article>
+          </div>
+
+          <div class="report-visual-grid">
+            <article class="report-panel report-panel--chart-wide">
+              <div class="report-panel-head">
+                <div>
+                  <p class="report-label">Ventas por hora</p>
+                  <h3>Flujo de ventas por hora</h3>
+                </div>
+              </div>
+              <div class="chart-shell chart-shell--bar">
+                <canvas id="salesByHourChart" aria-label="Grafico de ventas por hora"></canvas>
+              </div>
+            </article>
+
+            <article class="report-panel report-panel--chart-side">
+              <div class="report-panel-head">
+                <div>
+                  <p class="report-label">Metodos de pago</p>
+                  <h3>Distribucion por metodo</h3>
+                </div>
+              </div>
+              <div class="chart-shell chart-shell--pie">
+                <canvas id="paymentMethodChart" aria-label="Grafico de metodos de pago"></canvas>
+              </div>
+              <div id="reportMethodLegend" class="report-legend"></div>
+            </article>
+          </div>
+
+          <article class="report-panel report-panel--table">
+            <div class="report-panel-head">
+              <div>
+                <p class="report-label">Transacciones</p>
+                <h3>Detalle de pagos</h3>
+              </div>
+              <p id="reportRangeMeta" class="report-meta">Mostrando periodo actual</p>
             </div>
-            <div id="reporteList" class="list report-list"></div>
-          </section>
-        </div>
-      </section>
+
+            <div class="report-table-shell">
+              <table class="report-table">
+                <thead>
+                  <tr>
+                    <th>ID Pedido</th>
+                    <th>Mesa</th>
+                    <th>Monto (USD)</th>
+                    <th>Metodo</th>
+                    <th>Hora</th>
+                  </tr>
+                </thead>
+                <tbody id="reporteList"></tbody>
+              </table>
+            </div>
+          </article>
+        </section>
+      </div>
 
     </main>
 
     <script src="./config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <script src="./socket.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

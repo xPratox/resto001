@@ -25,7 +25,7 @@ const pedidoSchema = new mongoose.Schema(
     total: { type: Number, required: true, min: 0 },
     estado: {
       type: String,
-      enum: ['pagado', 'en_cocina', 'entregado'],
+      enum: ['pagado', 'en_cocina', 'entregado', 'limpieza'],
       default: 'pagado'
     }
   },

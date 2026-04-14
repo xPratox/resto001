@@ -2,7 +2,10 @@ require('dotenv').config();
 
 const { execFile } = require('child_process');
 const http = require('http');
+const { URL } = require('url');
 const chalkModule = require('chalk');
+const { addHours, endOfDay, parse, startOfDay } = require('date-fns');
+const { sanitizeKitchenOrder, shouldShowKitchenOrder } = require('./middleware/kitchenPayload');
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
@@ -16,17 +19,58 @@ const execFileAsync = promisify(execFile);
 const app = express();
 const server = http.createServer(app);
 
-const corsOptions = {
-	origin: true,
-	methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-	allowedHeaders: ['Content-Type', 'Authorization', 'x-resto-module'],
-};
-
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT) || 5000;
+const CORS_ALLOW_ALL = process.env.CORS_ALLOW_ALL !== 'false';
+const CORS_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
+	.split(',')
+	.map((origin) => origin.trim())
+	.filter(Boolean);
+const CORS_ALLOWED_DOMAIN_PATTERNS = [
+	/\.ngrok-free\.app$/i,
+	/\.expo\.dev$/i,
+	/\.exp\.direct$/i,
+];
+
+function matchesAllowedDomain(hostname) {
+	return CORS_ALLOWED_DOMAIN_PATTERNS.some((pattern) => pattern.test(hostname));
+}
+
+function isAllowedOrigin(origin) {
+	if (!origin) {
+		return true;
+	}
+
+	if (CORS_ALLOW_ALL || origin === '*') {
+		return true;
+	}
+
+	if (CORS_ALLOWED_ORIGINS.includes(origin)) {
+		return true;
+	}
+
+	try {
+		const parsedUrl = new URL(origin);
+		return matchesAllowedDomain(parsedUrl.hostname);
+	} catch (_error) {
+		return false;
+	}
+}
+
+function resolveCorsOrigin(origin, callback) {
+	callback(null, isAllowedOrigin(origin));
+}
+
+const corsOptions = {
+	origin: resolveCorsOrigin,
+	methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+	allowedHeaders: ['Content-Type', 'Authorization', 'x-resto-module'],
+	credentials: false,
+};
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/resto001';
 const HISTORY_TIMEZONE = process.env.HISTORY_TIMEZONE || 'America/Caracas';
 const EXCHANGE_RATE_TIMEZONE = process.env.EXCHANGE_RATE_TIMEZONE || HISTORY_TIMEZONE;
+const STATS_UTC_OFFSET_HOURS = Number(process.env.STATS_UTC_OFFSET_HOURS || 4);
 const AUTO_RECOVER_PORT = process.env.AUTO_RECOVER_PORT !== 'false';
 const PORT_RECOVERY_WAIT_MS = 250;
 const PORT_RECOVERY_MAX_ATTEMPTS = 12;
@@ -46,8 +90,8 @@ const TABLE_DEFINITIONS = [
 const TABLES = TABLE_DEFINITIONS.map((table) => table.table);
 const ORDER_STATUS = {
 	AVAILABLE: 'disponible',
-	PENDING: 'pendiente',
-	KITCHEN: 'en cocina',
+	KITCHEN: 'en_cocina',
+	DELIVERED: 'entregado',
 	CLEANING: 'limpieza',
 	PAID: 'pagado',
 };
@@ -72,15 +116,15 @@ function isOrderInCleaning(order) {
 		return false;
 	}
 
-	return order.status === ORDER_STATUS.CLEANING || (order.status === ORDER_STATUS.PAID && hasRegisteredPayment(order));
+	return order.status === ORDER_STATUS.CLEANING;
 }
 
 function isOrderLocked(order) {
-	return Boolean(order) && (order.status === ORDER_STATUS.CLEANING || order.status === ORDER_STATUS.PAID || hasRegisteredPayment(order));
+	return Boolean(order) && (order.status === ORDER_STATUS.PAID || hasRegisteredPayment(order));
 }
 
 function getVisibleTableStatus(order) {
-	if (!order || order.mesa_liberada === true) {
+	if (!order || order.mesa_liberada === true || order.status === ORDER_STATUS.PAID) {
 		return ORDER_STATUS.AVAILABLE;
 	}
 
@@ -88,17 +132,14 @@ function getVisibleTableStatus(order) {
 		return ORDER_STATUS.CLEANING;
 	}
 
-	return order.status || ORDER_STATUS.PENDING;
+	return order.status || ORDER_STATUS.KITCHEN;
 }
 
 function buildActiveOrdersFilter(extra = {}) {
 	return {
 		...extra,
-		$or: [
-			{ status: { $in: [ORDER_STATUS.PENDING, ORDER_STATUS.KITCHEN, ORDER_STATUS.CLEANING] } },
-			{ status: ORDER_STATUS.PAID, mesa_liberada: { $ne: true } },
-			{ hora_pago: { $ne: null }, mesa_liberada: { $ne: true } },
-		],
+		status: { $in: [ORDER_STATUS.KITCHEN, ORDER_STATUS.DELIVERED, ORDER_STATUS.CLEANING] },
+		mesa_liberada: { $ne: true },
 	};
 }
 
@@ -148,15 +189,40 @@ function emitOrderRealtime(action, order) {
 		order,
 	};
 
+	if (shouldShowKitchenOrder(order, [ORDER_STATUS.KITCHEN])) {
+		const kitchenPayload = sanitizeKitchenOrder(order);
+
+		if (kitchenPayload) {
+			io.emit('ACTUALIZACION_GLOBAL', order);
+			io.emit('PEDIDO_GLOBAL', order);
+			io.emit('PEDIDO_COCINA', kitchenPayload);
+			io.emit('nuevo_pedido', kitchenPayload);
+			io.emit('kitchen_order_upsert', kitchenPayload);
+		}
+	} else {
+		io.emit('kitchen_order_removed', {
+			idPedido: String(order._id),
+			numeroMesa: String(order.table || ''),
+		});
+	}
+
 	io.emit('orden_actualizada', payload);
 
 	if (action === 'created') {
+		io.emit('CAMBIO_ESTADO_MESA', payload);
 		io.emit('mesa_ocupada', payload);
 		io.emit('new_order', order);
 		return;
 	}
 
+	if (action === 'kitchen_ready') {
+		io.emit('pedido_entregado', payload);
+		io.emit('CAMBIO_ESTADO_MESA', payload);
+		io.emit('mesa_actualizada', payload);
+	}
+
 	if (action === 'paid') {
+		io.emit('CAMBIO_ESTADO_MESA', payload);
 		io.emit('mesa_en_limpieza', payload);
 		io.emit('mesa_actualizada', payload);
 	}
@@ -167,6 +233,7 @@ function emitOrderRealtime(action, order) {
 	}
 
 	if (action === 'table_released') {
+		io.emit('CAMBIO_ESTADO_MESA', payload);
 		io.emit('mesa_actualizada', payload);
 		io.emit('mesa_liberada', payload);
 	}
@@ -354,7 +421,7 @@ function hasRemovedItems(currentItems, nextItems) {
 async function consolidatePendingOrderForTable(table) {
 	const pendingOrders = await Order.find({
 		table,
-		status: 'pendiente',
+		status: ORDER_STATUS.KITCHEN,
 	}).sort({ createdAt: 1 });
 
 	if (pendingOrders.length === 0) {
@@ -425,7 +492,13 @@ const orderSchema = new mongoose.Schema(
 				fecha: { type: Date, required: true, default: Date.now },
 			},
 		],
-		status: { type: String, default: ORDER_STATUS.PENDING, trim: true },
+		status: {
+			type: String,
+			enum: [ORDER_STATUS.KITCHEN, ORDER_STATUS.DELIVERED, ORDER_STATUS.CLEANING, ORDER_STATUS.PAID],
+			default: ORDER_STATUS.KITCHEN,
+			trim: true,
+		},
+		preparedAt: { type: Date, default: null },
 		hora_pago: { type: Date, default: null },
 		mesa_liberada: { type: Boolean, default: false },
 	},
@@ -612,10 +685,84 @@ function buildPaidOrdersHistoryPipeline() {
 	];
 }
 
+function resolveHistoryRange(rangeKey) {
+	const now = new Date();
+	const currentDayKey = getHistoryDateKey(now);
+	const [year, month, day] = currentDayKey.split('-').map(Number);
+	const todayStart = new Date(Date.UTC(year, month - 1, day, 4, 0, 0, 0));
+	const tomorrowStart = new Date(todayStart);
+	tomorrowStart.setUTCDate(tomorrowStart.getUTCDate() + 1);
+
+	if (rangeKey === 'yesterday') {
+		const yesterdayStart = new Date(todayStart);
+		yesterdayStart.setUTCDate(yesterdayStart.getUTCDate() - 1);
+		return {
+			key: 'yesterday',
+			label: 'Ayer',
+			start: yesterdayStart,
+			end: todayStart,
+		};
+	}
+
+	if (rangeKey === 'last7days') {
+		const last7DaysStart = new Date(todayStart);
+		last7DaysStart.setUTCDate(last7DaysStart.getUTCDate() - 6);
+		return {
+			key: 'last7days',
+			label: 'Ultimos 7 dias',
+			start: last7DaysStart,
+			end: tomorrowStart,
+		};
+	}
+
+	return {
+		key: 'today',
+		label: 'Hoy',
+		start: todayStart,
+		end: tomorrowStart,
+	};
+}
+
+function parseStatsDateBoundary(value, boundary = 'start') {
+	if (!value) {
+		return null;
+	}
+
+	const rawValue = String(value).trim();
+
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(rawValue)) {
+		return null;
+	}
+
+	const parsedDate = parse(rawValue, 'yyyy-MM-dd', new Date());
+
+	if (Number.isNaN(parsedDate.getTime())) {
+		return null;
+	}
+
+	const boundaryDate = boundary === 'end' ? endOfDay(parsedDate) : startOfDay(parsedDate);
+	const parsed = addHours(boundaryDate, STATS_UTC_OFFSET_HOURS);
+
+	return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function normalizePaymentMethod(method) {
+	const normalized = String(method || 'efectivo').trim().toLowerCase();
+
+	if (!normalized) {
+		return 'efectivo';
+	}
+
+	return normalized;
+}
+
 const io = new Server(server, {
 	cors: {
-		origin: true,
+		origin: resolveCorsOrigin,
 		methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+	},
+	allowRequest: (req, callback) => {
+		callback(null, isAllowedOrigin(req.headers.origin));
 	},
 });
 
@@ -623,8 +770,39 @@ app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 app.use(express.json());
 
+function broadcastGlobalOrder(pedido) {
+	if (!pedido || typeof pedido !== 'object') {
+		brandLog.warn('NUEVO_PEDIDO recibido sin datos validos para distribucion global.');
+		return;
+	}
+
+	const tableLabel = String(
+		pedido.table || pedido.tableId || pedido.numeroMesa || pedido.mesa || ''
+	).trim();
+	const kitchenPayload = sanitizeKitchenOrder(pedido);
+
+	io.emit('ACTUALIZACION_GLOBAL', pedido);
+	io.emit('PEDIDO_GLOBAL', pedido);
+	console.log(`📡 Pedido de Mesa ${tableLabel || 'N/D'} distribuido a todos los módulos`);
+
+	if (!kitchenPayload) {
+		brandLog.warn('NUEVO_PEDIDO recibido sin datos validos para cocina.');
+		return;
+	}
+
+	brandLog.info(`Pedido recibido desde mesonero para cocina: ${kitchenPayload.idPedido} / ${kitchenPayload.numeroMesa}`);
+	io.emit('PEDIDO_COCINA', kitchenPayload);
+	io.emit('nuevo_pedido', kitchenPayload);
+	io.emit('PEDIDO_PARA_COCINA', kitchenPayload);
+	io.emit('kitchen_order_upsert', kitchenPayload);
+}
+
 io.on('connection', (socket) => {
 	brandLog.info(`Cliente conectado por socket: ${socket.id}`);
+
+	socket.on('ENVIAR_PEDIDO', broadcastGlobalOrder);
+	socket.on('NUEVO_PEDIDO', broadcastGlobalOrder);
+	socket.on('NUEVO_PEDIDO_MESONERO', broadcastGlobalOrder);
 
 	socket.on('disconnect', () => {
 		brandLog.info(`Cliente desconectado: ${socket.id}`);
@@ -679,6 +857,185 @@ app.get('/api/exchange-rate/today', async (_req, res) => {
 	}
 });
 
+app.get('/api/stats/ventas', async (req, res) => {
+	const inicio = parseStatsDateBoundary(req.query?.inicio, 'start');
+	const fin = parseStatsDateBoundary(req.query?.fin, 'end');
+
+	if (!inicio || !fin) {
+		return res.status(400).json({
+			ok: false,
+			message: 'Debes enviar inicio y fin con formato YYYY-MM-DD.',
+		});
+	}
+
+	if (inicio > fin) {
+		return res.status(400).json({
+			ok: false,
+			message: 'La fecha de inicio no puede ser mayor que la fecha fin.',
+		});
+	}
+
+	try {
+		const paidMatch = {
+			status: ORDER_STATUS.PAID,
+			hora_pago: {
+				$gte: inicio,
+				$lte: fin,
+			},
+		};
+
+		const matchedOrders = await Order.find(paidMatch)
+			.select({
+				table: 1,
+				status: 1,
+				total: 1,
+				hora_pago: 1,
+				historialPagos: 1,
+			})
+			.sort({ hora_pago: -1 })
+			.lean();
+
+		const ordersInRangeByStatus = await Order.aggregate([
+			{
+				$match: {
+					hora_pago: {
+						$gte: inicio,
+						$lte: fin,
+					},
+				},
+			},
+			{
+				$group: {
+					_id: '$status',
+					cantidad: { $sum: 1 },
+					total: { $sum: { $ifNull: ['$total', 0] } },
+				},
+			},
+			{
+				$sort: { cantidad: -1 },
+			},
+		]);
+
+		console.log('[stats/ventas] rango consultado', {
+			inicio: inicio.toISOString(),
+			fin: fin.toISOString(),
+			filtro: {
+				inicio: String(req.query?.inicio),
+				fin: String(req.query?.fin),
+			},
+		});
+		console.log('[stats/ventas] ordenes pagadas encontradas', matchedOrders.map((order) => ({
+			id: String(order._id),
+			mesa: order.table,
+			status: order.status,
+			total: roundCurrency(Number(order.total || 0)),
+			hora_pago: order.hora_pago,
+			metodosPago: (order.historialPagos || []).map((payment) => ({
+				metodo: normalizePaymentMethod(payment.metodo),
+				monto: roundCurrency(Number(payment.monto || 0)),
+				fecha: payment.fecha,
+			})),
+		})));
+		console.log('[stats/ventas] resumen por status dentro del rango', ordersInRangeByStatus);
+
+		const [statsResult] = await Order.aggregate([
+			{
+				$match: paidMatch,
+			},
+			{
+				$facet: {
+					resumen: [
+						{
+							$group: {
+								_id: null,
+								totalVentas: {
+									$sum: {
+										$round: [{ $toDouble: '$total' }, 2],
+									},
+								},
+								cantidadOrdenes: { $sum: 1 },
+							},
+						},
+						{
+							$project: {
+								_id: 0,
+								totalVentas: { $round: ['$totalVentas', 2] },
+								cantidadOrdenes: 1,
+								ticketPromedio: {
+									$cond: [
+										{ $gt: ['$cantidadOrdenes', 0] },
+										{ $round: [{ $divide: ['$totalVentas', '$cantidadOrdenes'] }, 2] },
+										0,
+									],
+								},
+							},
+						},
+					],
+					metodosPago: [
+						{
+							$unwind: {
+								path: '$historialPagos',
+								preserveNullAndEmptyArrays: false,
+							},
+						},
+						{
+							$group: {
+								_id: {
+									$toLower: {
+										$trim: {
+											input: { $ifNull: ['$historialPagos.metodo', 'efectivo'] },
+										},
+									},
+								},
+								total: {
+									$sum: {
+										$round: [{ $toDouble: '$historialPagos.monto' }, 2],
+									},
+								},
+							},
+						},
+						{
+							$project: {
+								_id: 0,
+								k: {
+									$cond: [
+										{ $gt: [{ $strLenCP: '$_id' }, 0] },
+										'$_id',
+										'efectivo',
+									],
+								},
+								v: { $round: ['$total', 2] },
+							},
+						},
+					],
+				},
+			},
+		]);
+
+		const summary = statsResult?.resumen?.[0] || {
+			totalVentas: 0,
+			cantidadOrdenes: 0,
+			ticketPromedio: 0,
+		};
+		const metodosPago = Object.fromEntries(
+			(statsResult?.metodosPago || []).map((item) => [item.k, item.v])
+		);
+
+		return res.json({
+			totalVentas: summary.totalVentas,
+			cantidadOrdenes: summary.cantidadOrdenes,
+			ticketPromedio: summary.ticketPromedio,
+			metodosPago,
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: 'No se pudieron calcular las estadisticas de ventas.',
+			error: error.message,
+		});
+	}
+});
+
 app.put('/api/exchange-rate/today', async (req, res) => {
 	const moduleName = String(req.headers['x-resto-module'] || '').trim().toLowerCase();
 	const parsedRate = parseCurrency(req.body?.rate);
@@ -701,14 +1058,15 @@ app.put('/api/exchange-rate/today', async (req, res) => {
 
 	try {
 		const dayKey = getHistoryDateKey(new Date(), EXCHANGE_RATE_TIMEZONE);
-		const existingRate = await model.findOne({ dayKey });
+		const tasaExistente = await model.findOne({ dayKey });
 
-		if (existingRate) {
-			return res.status(409).json({
+		if (tasaExistente) {
+			return res.status(400).json({
 				ok: false,
-				message: `La tasa ${label} del dia ya fue asignada y queda bloqueada hasta el siguiente dia.`,
+				msg: 'Acceso denegado: La tasa ya fue fijada para hoy',
+				message: 'Acceso denegado: La tasa ya fue fijada para hoy',
 				rateType,
-				rate: existingRate.rate,
+				rate: tasaExistente.rate,
 				dayKey,
 				timezone: EXCHANGE_RATE_TIMEZONE,
 			});
@@ -729,7 +1087,7 @@ app.put('/api/exchange-rate/today', async (req, res) => {
 			assignedAt: createdRate.assignedAt,
 		});
 
-		return res.status(201).json({
+		return res.status(200).json({
 			ok: true,
 			message: `Tasa ${label} diaria registrada correctamente.`,
 			rateType,
@@ -748,47 +1106,10 @@ app.put('/api/exchange-rate/today', async (req, res) => {
 });
 
 app.delete('/api/exchange-rate/today', async (req, res) => {
-	const moduleName = String(req.headers['x-resto-module'] || '').trim().toLowerCase();
-	const rateType = normalizeRateType(req.query?.type || req.body?.type);
-	const { model, label } = getRateModelByType(rateType);
-
-	if (moduleName !== 'caja') {
-		return res.status(403).json({
-			ok: false,
-			message: `Solo caja puede reiniciar la tasa ${label} diaria.`,
-		});
-	}
-
-	try {
-		const dayKey = getHistoryDateKey(new Date(), EXCHANGE_RATE_TIMEZONE);
-		const deletedRate = await model.findOneAndDelete({ dayKey });
-
-		io.emit('tasa_actualizada', {
-			rateType,
-			dayKey,
-			rate: null,
-			reset: true,
-			timezone: EXCHANGE_RATE_TIMEZONE,
-		});
-
-		return res.json({
-			ok: true,
-			message: deletedRate
-				? `Tasa ${label} diaria reiniciada correctamente.`
-				: `No existia una tasa ${label} asignada para hoy.`,
-			rateType,
-			dayKey,
-			rate: null,
-			canEdit: true,
-			timezone: EXCHANGE_RATE_TIMEZONE,
-		});
-	} catch (error) {
-		return res.status(500).json({
-			ok: false,
-			message: `No se pudo reiniciar la tasa ${label} diaria.`,
-			error: error.message,
-		});
-	}
+	return res.status(403).json({
+		ok: false,
+		message: 'Acceso denegado: La tasa ya fue fijada para hoy',
+	});
 });
 
 app.get('/api/tables/status', async (req, res) => {
@@ -843,25 +1164,79 @@ app.get('/api/tables/status', async (req, res) => {
 	}
 });
 
-app.get('/api/orders/history', async (_req, res) => {
+app.get('/api/orders/history', async (req, res) => {
 	try {
+		const selectedRange = resolveHistoryRange(String(req.query?.range || 'today').trim().toLowerCase());
 		const [history] = await Order.aggregate(buildPaidOrdersHistoryPipeline());
-		const summaryByDay = history?.summaryByDay || [];
-		const transactions = history?.transactions || [];
+		const allSummaryByDay = history?.summaryByDay || [];
+		const allTransactions = history?.transactions || [];
+		const transactions = allTransactions.filter((transaction) => {
+			const paidAt = transaction?.hora_pago ? new Date(transaction.hora_pago) : null;
+			return paidAt && paidAt >= selectedRange.start && paidAt < selectedRange.end;
+		});
+		const summaryByDay = allSummaryByDay.filter((summary) => {
+			if (!summary?.reportDate) {
+				return false;
+			}
+
+			const summaryDate = new Date(`${summary.reportDate}T04:00:00.000Z`);
+			return summaryDate >= selectedRange.start && summaryDate < selectedRange.end;
+		});
+
+		const totalRevenue = transactions.reduce((sum, transaction) => sum + Number(transaction.paymentAmount || 0), 0);
+		const uniqueOrders = new Set(transactions.map((transaction) => String(transaction._id || '')).filter(Boolean));
+		const uniqueTables = new Set(transactions.map((transaction) => String(transaction.table || '')).filter(Boolean));
+		const paymentMethods = transactions.reduce((accumulator, transaction) => {
+			const method = String(transaction.paymentMethod || 'otro').trim().toLowerCase();
+			accumulator[method] = Number(((accumulator[method] || 0) + Number(transaction.paymentAmount || 0)).toFixed(2));
+			return accumulator;
+		}, {});
+		const hourlySales = transactions.reduce((accumulator, transaction) => {
+			const paidAt = transaction?.hora_pago ? new Date(transaction.hora_pago) : null;
+
+			if (!paidAt || Number.isNaN(paidAt.getTime())) {
+				return accumulator;
+			}
+
+			const hourLabel = `${new Intl.DateTimeFormat('en-GB', {
+				timeZone: HISTORY_TIMEZONE,
+				hour: '2-digit',
+				hour12: false,
+			}).format(paidAt)}:00`;
+
+			accumulator[hourLabel] = Number(((accumulator[hourLabel] || 0) + Number(transaction.paymentAmount || 0)).toFixed(2));
+			return accumulator;
+		}, {});
 		const todayKey = getHistoryDateKey(new Date());
 		const daySummary =
 			summaryByDay.find((summary) => summary.reportDate === todayKey) || {
-				reportDate: todayKey,
-				transactionsCount: 0,
-				totalRevenue: 0,
+				reportDate: selectedRange.key === 'today' ? todayKey : selectedRange.label,
+				transactionsCount: uniqueOrders.size,
+				totalRevenue: Number(totalRevenue.toFixed(2)),
 			};
 
 		return res.json({
 			ok: true,
 			timezone: HISTORY_TIMEZONE,
+			range: selectedRange,
+			totalTables: TABLES.length,
 			totalTransactions: transactions.length,
 			daySummary,
 			summaryByDay,
+			kpis: {
+				totalRevenue: Number(totalRevenue.toFixed(2)),
+				totalOrders: uniqueOrders.size,
+				averageTicket: uniqueOrders.size ? Number((totalRevenue / uniqueOrders.size).toFixed(2)) : 0,
+				cleanedTablesCount: uniqueTables.size,
+				cleaningPercentage: TABLES.length ? Number(((uniqueTables.size / TABLES.length) * 100).toFixed(1)) : 0,
+			},
+			hourlySales: Object.entries(hourlySales)
+				.map(([hour, total]) => ({ hour, total }))
+				.sort((left, right) => left.hour.localeCompare(right.hour)),
+			paymentMethodBreakdown: Object.entries(paymentMethods).map(([method, total]) => ({
+				method,
+				total,
+			})),
 			transactions,
 		});
 	} catch (error) {
@@ -869,6 +1244,76 @@ app.get('/api/orders/history', async (_req, res) => {
 			ok: false,
 			message: 'No se pudo generar el historial de ventas.',
 			error: error.message,
+		});
+	}
+});
+
+app.get('/api/kitchen/orders', async (_req, res) => {
+	try {
+		const orders = await Order.find({
+			status: ORDER_STATUS.KITCHEN,
+			preparedAt: null,
+			mesa_liberada: { $ne: true },
+		})
+			.sort({ createdAt: 1 })
+			.lean();
+
+		return res.json({
+			ok: true,
+			orders: orders
+				.map((order) => sanitizeKitchenOrder(order))
+				.filter(Boolean),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: 'No se pudo cargar la cola de cocina.',
+			error: error.message,
+		});
+	}
+});
+
+app.patch('/api/kitchen/orders/:id/ready', async (req, res) => {
+	try {
+		const order = await Order.findById(req.params.id);
+
+		if (!order) {
+			return res.status(404).json({
+				ok: false,
+				message: 'La orden no existe.',
+			});
+		}
+
+		if (order.mesa_liberada === true || order.status === ORDER_STATUS.PAID) {
+			return res.status(400).json({
+				ok: false,
+				message: 'La orden ya no esta disponible para cocina.',
+			});
+		}
+
+		if (order.status !== ORDER_STATUS.KITCHEN) {
+			return res.status(400).json({
+				ok: false,
+				message: 'Solo pedidos en cocina pueden marcarse como entregados.',
+			});
+		}
+
+		if (!order.preparedAt) {
+			order.preparedAt = new Date();
+			order.status = ORDER_STATUS.DELIVERED;
+			await order.save();
+			emitOrderRealtime('kitchen_ready', order);
+		}
+
+		return res.json({
+			ok: true,
+			message: 'Pedido marcado como entregado.',
+			order: sanitizeKitchenOrder(order),
+		});
+	} catch (error) {
+		return res.status(400).json({
+			ok: false,
+			message: error.message || 'No se pudo marcar el pedido como preparado.',
 		});
 	}
 });
@@ -981,7 +1426,8 @@ app.post('/api/orders', async (req, res) => {
 							$set: {
 								cliente_nombre: pendingOrder.cliente_nombre || normalizedClientName,
 								seccion: normalizedSection,
-								status: ORDER_STATUS.PENDING,
+								status: ORDER_STATUS.KITCHEN,
+								preparedAt: null,
 								hora_pago: null,
 								mesa_liberada: false,
 							},
@@ -989,7 +1435,8 @@ app.post('/api/orders', async (req, res) => {
 						: {
 							$set: {
 								seccion: normalizedSection,
-								status: ORDER_STATUS.PENDING,
+								status: ORDER_STATUS.KITCHEN,
+								preparedAt: null,
 								hora_pago: null,
 								mesa_liberada: false,
 							},
@@ -1008,7 +1455,7 @@ app.post('/api/orders', async (req, res) => {
 
 			return res.status(200).json({
 				ok: true,
-				message: 'Pedido unificado en la orden pendiente de la mesa.',
+				message: 'Pedido unificado en la orden activa de la mesa.',
 				order: updatedOrder,
 			});
 		}
@@ -1035,7 +1482,8 @@ app.post('/api/orders', async (req, res) => {
 			total: itemsTotal,
 			montoPagado: 0,
 			historialPagos: [],
-			status: ORDER_STATUS.PENDING,
+			status: ORDER_STATUS.KITCHEN,
+			preparedAt: null,
 			hora_pago: null,
 			mesa_liberada: false,
 		});
@@ -1104,8 +1552,8 @@ app.patch('/api/orders/:id/modify', async (req, res) => {
 		}
 
 		if (action === 'remove') {
-			if (order.status !== 'pendiente') {
-				throw new Error('Solo se pueden cancelar items cuando la orden esta pendiente.');
+			if (order.status !== ORDER_STATUS.KITCHEN) {
+				throw new Error('Solo se pueden cancelar items cuando la orden esta en cocina.');
 			}
 
 			if (!item.itemId) {
@@ -1130,6 +1578,10 @@ app.patch('/api/orders/:id/modify', async (req, res) => {
 		}
 
 		order.seccion = order.seccion || getTableDefinition(order.table)?.section || 'Sala';
+		if (action === 'add') {
+			order.status = ORDER_STATUS.KITCHEN;
+			order.preparedAt = null;
+		}
 		order.total = computeOrderTotal(order.items);
 		await order.save();
 
@@ -1176,7 +1628,7 @@ app.patch('/api/orders/:id/update-items', async (req, res) => {
 		const normalizedItems = items.map(normalizeOrderItem);
 		const removingExistingItems = hasRemovedItems(order.items, normalizedItems);
 
-		if (order.status === 'en cocina' && removingExistingItems) {
+		if (order.status === ORDER_STATUS.KITCHEN && removingExistingItems) {
 			throw new Error('La orden esta en cocina. Para eliminar items necesitas autorizacion.');
 		}
 
@@ -1187,6 +1639,8 @@ app.patch('/api/orders/:id/update-items', async (req, res) => {
 				$set: {
 					items: normalizedItems,
 					total,
+					status: ORDER_STATUS.KITCHEN,
+					preparedAt: null,
 				},
 			},
 			{
@@ -1246,7 +1700,8 @@ app.patch('/api/orders/:id/sync', async (req, res) => {
 				$set: {
 					items: normalizedItems,
 					total: newTotal,
-					status: ORDER_STATUS.PENDING,
+					status: ORDER_STATUS.KITCHEN,
+					preparedAt: null,
 				},
 			},
 			{
@@ -1284,10 +1739,10 @@ app.patch('/api/orders/:id/pay', async (req, res) => {
 			});
 		}
 
-		if (getVisibleTableStatus(order) === ORDER_STATUS.CLEANING || order.mesa_liberada === true) {
+		if (order.status === ORDER_STATUS.PAID || order.mesa_liberada === true) {
 			return res.status(400).json({
 				ok: false,
-				message: 'La orden ya fue cerrada y enviada a limpieza.',
+				message: 'La orden ya fue pagada.',
 			});
 		}
 
@@ -1321,23 +1776,32 @@ app.patch('/api/orders/:id/pay', async (req, res) => {
 		order.seccion = order.seccion || getTableDefinition(order.table)?.section || 'Sala';
 		order.total = roundCurrency(Number(computeOrderTotal(order.items ?? [])));
 
-		const currentPaidAmount = roundCurrency(Number(order.montoPagado || 0));
-		const saldoPendiente = roundCurrency(order.total - currentPaidAmount);
+		const montoPagadoAnteriormente = roundCurrency(Number(order.montoPagado || 0));
+		const saldoPendiente = roundCurrency(order.total - montoPagadoAnteriormente);
 		const normalizedAmount = roundCurrency(Number(parsedAmount));
 
 		console.log(`Saldo Pendiente: ${saldoPendiente.toFixed(2)}`);
 
+		if (saldoPendiente <= 0) {
+			return res.status(400).json({
+				ok: false,
+				message: 'La orden ya no tiene saldo pendiente.',
+				remainingAmount: 0,
+			});
+		}
+
 		if (normalizedAmount > saldoPendiente) {
 			return res.status(400).json({
 				ok: false,
-				message: `El monto ingresado excede el saldo pendiente ($${saldoPendiente.toFixed(2)}). Por favor, ingrese el monto exacto o una parte menor`,
+				message: 'El monto excede el saldo pendiente',
 				order,
 				remainingAmount: saldoPendiente,
 			});
 		}
 
-		const nextPaidAmount = normalizedState === 'completado' ? roundCurrency(Number(currentPaidAmount + normalizedAmount)) : currentPaidAmount;
+		const nextPaidAmount = normalizedState === 'completado' ? roundCurrency(Number(montoPagadoAnteriormente + normalizedAmount)) : montoPagadoAnteriormente;
 		const remainingAmount = Math.max(0, roundCurrency(order.total - nextPaidAmount));
+		const isFullyPaid = normalizedState === 'completado' && nextPaidAmount === order.total;
 
 		if (normalizedState === 'completado') {
 			order.montoPagado = nextPaidAmount;
@@ -1362,13 +1826,13 @@ app.patch('/api/orders/:id/pay', async (req, res) => {
 			});
 		}
 
-		if (order.montoPagado === order.total) {
-			order.status = ORDER_STATUS.PAID;
+		if (isFullyPaid) {
+			order.status = ORDER_STATUS.CLEANING;
 			order.hora_pago = new Date();
 			order.mesa_liberada = false;
-			console.log(`Mesa actualizada a limpieza: ${order.table}`);
+			console.log(`Pedido enviado a limpieza: ${order.table}`);
 		} else {
-			order.status = ORDER_STATUS.PENDING;
+			order.status = order.status === ORDER_STATUS.DELIVERED ? ORDER_STATUS.DELIVERED : ORDER_STATUS.KITCHEN;
 			order.hora_pago = null;
 			order.mesa_liberada = false;
 		}
@@ -1377,13 +1841,13 @@ app.patch('/api/orders/:id/pay', async (req, res) => {
 
 		await order.save();
 
-		emitOrderRealtime(order.status === ORDER_STATUS.PAID ? 'paid' : 'partial_payment', order);
+		emitOrderRealtime(order.status === ORDER_STATUS.CLEANING ? 'paid' : 'partial_payment', order);
 
 		return res.json({
 			ok: true,
 			message:
-				order.status === ORDER_STATUS.PAID
-					? `${order.table} pagada por completo. Mesa enviada a limpieza.`
+				order.status === ORDER_STATUS.CLEANING
+					? `${order.table} pagada por completo y enviada a limpieza.`
 					: `${order.table} abono registrado. Restante: ${remainingAmount.toFixed(2)}.`,
 			montoPagado: Number(order.montoPagado || 0),
 			remainingAmount,
@@ -1430,10 +1894,10 @@ app.patch('/api/tables/:id/liberar', async (req, res) => {
 			});
 		}
 
-		if (getVisibleTableStatus(order) !== ORDER_STATUS.CLEANING) {
+		if (order.status !== ORDER_STATUS.CLEANING) {
 			return res.status(400).json({
 				ok: false,
-				message: 'Solo puedes liberar mesas que esten en limpieza.',
+				message: 'Solo puedes liberar mesas que ya esten en limpieza.',
 			});
 		}
 
@@ -1475,10 +1939,10 @@ app.patch('/api/orders/:id/release-table', async (req, res) => {
 			});
 		}
 
-		if (getVisibleTableStatus(order) !== ORDER_STATUS.CLEANING) {
+		if (order.status !== ORDER_STATUS.CLEANING) {
 			return res.status(400).json({
 				ok: false,
-				message: 'Solo puedes liberar mesas que esten en limpieza.',
+				message: 'Solo puedes liberar mesas que ya esten en limpieza.',
 			});
 		}
 

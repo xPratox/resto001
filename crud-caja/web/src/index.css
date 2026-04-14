@@ -1,0 +1,20 @@
+@import '../../src/public/styles.css';
+
+#root {
+  min-height: 100vh;
+}
+
+.report-block.report-block--react {
+  margin-top: 22px;
+}
+
+.report-empty-react {
+  color: var(--resto-text-muted);
+  font-size: 14px;
+  margin: 0;
+}
+
+.analytics-react-shell {
+  display: grid;
+  gap: 0;
+}

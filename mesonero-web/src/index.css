@@ -11,13 +11,17 @@
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    --resto-background-deep-carbon: #0F172A;
-    --resto-background-slate-accent: #1E293B;
-    --resto-text-metallic-light: #F8FAFC;
-    --resto-accent-sunset-orange: #FF6B35;
+    --resto-bg: #111827;
+    --resto-surface: #374151;
+    --resto-text: #FFFFFF;
+    --resto-accent: #00D8FF;
+    --resto-cyan: #06B6D4;
+    --resto-status-info: #475569;
     --resto-status-success: #10B981;
+    --resto-status-warning: #F97316;
     --resto-status-error: #EF4444;
-    --resto-border-subtle: #334155;
+    --resto-border-subtle: #374151;
+    --resto-border-strong: #475569;
   }
 
   * {
@@ -25,19 +29,19 @@
   }
 
   html {
-    @apply bg-deepCarbon;
+    @apply bg-resto-bg;
   }
 
   body {
     background:
-      radial-gradient(circle at top left, rgba(255, 107, 53, 0.18), transparent 24%),
-      radial-gradient(circle at bottom right, rgba(255, 107, 53, 0.12), transparent 24%),
-      linear-gradient(180deg, var(--resto-background-deep-carbon) 0%, #111827 100%);
-    @apply m-0 min-h-screen font-sans text-metallicLight;
+      radial-gradient(circle at top left, rgba(0, 216, 255, 0.18), transparent 24%),
+      radial-gradient(circle at bottom right, rgba(6, 182, 212, 0.12), transparent 24%),
+      linear-gradient(180deg, var(--resto-bg) 0%, #0b1220 100%);
+    @apply m-0 min-h-screen bg-resto-bg font-sans text-resto-text;
   }
 
   button {
-    @apply min-h-11;
+    @apply min-h-12;
   }
 
   #root {
@@ -45,8 +49,22 @@
   }
 }
 
+@layer components {
+  .card {
+    @apply border border-resto-surface bg-resto-surface;
+  }
+
+  .btn-primary {
+    @apply min-h-12 rounded-2xl bg-resto-accent px-6 py-4 font-semibold text-resto-bg;
+  }
+
+  .btn-secondary {
+    @apply min-h-12 rounded-2xl border border-resto-surface bg-resto-cyan px-6 py-4 font-semibold text-resto-bg;
+  }
+}
+
 @layer utilities {
   .glass-panel {
-    @apply border border-carbonLine bg-slateAccent/90 backdrop-blur-xl;
+    @apply border border-resto-surface bg-resto-surface/95 backdrop-blur-xl;
   }
 }

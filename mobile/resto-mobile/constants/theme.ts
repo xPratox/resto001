@@ -1,34 +1,52 @@
-/**
- * Below are the colors that are used in the app. The colors are defined in the light and dark mode.
- * There are many other ways to style your app. For example, [Nativewind](https://www.nativewind.dev/), [Tamagui](https://tamagui.dev/), [unistyles](https://reactnativeunistyles.vercel.app), etc.
- */
-
 import { Platform } from 'react-native';
+
+import colors from '@/src/theme/colors';
+import typography from '@/src/theme/typography';
 
 export const RestoBrandTheme = {
   background: {
-    deepCarbon: '#0F172A',
-    slateAccent: '#1E293B',
+    deepCarbon: colors.restoBg,
+    slateAccent: colors.restoSurface,
+    elevated: colors.restoSurface,
+  },
+  surface: {
+    base: colors.restoBg,
+    card: colors.restoSurface,
+    elevated: colors.restoSurface,
   },
   text: {
-    metallicLight: '#F8FAFC',
-    metallicMuted: '#CBD5E1',
-    metallicSoft: '#94A3B8',
-    contrastOnAccent: '#0F172A',
+    primary: colors.restoText,
+    secondary: colors.textMuted,
+    muted: colors.textSoft,
+    metallicLight: colors.restoText,
+    metallicMuted: colors.textMuted,
+    metallicSoft: colors.textSoft,
+    contrastOnAccent: colors.restoBg,
+    onAccent: colors.restoBg,
   },
   accent: {
-    sunsetOrange: '#FF6B35',
+    primary: colors.restoAccent,
+    secondary: colors.restoCyan,
+    electricViolet: colors.restoAccent,
+    actionCyan: colors.restoCyan,
+    sunsetOrange: colors.restoAccent,
   },
   status: {
-    success: '#10B981',
-    cleaning: '#3B82F6',
-    error: '#EF4444',
+    info: colors.pending,
+    neutral: colors.pending,
+    success: colors.ready,
+    warning: colors.modified,
+    cleaning: colors.modified,
+    danger: colors.critical,
+    error: colors.critical,
   },
   border: {
-    subtle: '#334155',
+    subtle: colors.border,
+    strong: colors.borderStrong,
+    accent: 'rgba(0, 216, 255, 0.36)',
   },
   overlay: {
-    scrim: 'rgba(15, 23, 42, 0.78)',
+    scrim: colors.overlay,
   },
 } as const;
 
@@ -36,18 +54,18 @@ export const Colors = {
   light: {
     text: RestoBrandTheme.text.metallicLight,
     background: RestoBrandTheme.background.deepCarbon,
-    tint: RestoBrandTheme.accent.sunsetOrange,
-    icon: RestoBrandTheme.text.metallicSoft,
+    tint: RestoBrandTheme.accent.primary,
+    icon: RestoBrandTheme.accent.secondary,
     tabIconDefault: RestoBrandTheme.text.metallicSoft,
-    tabIconSelected: RestoBrandTheme.accent.sunsetOrange,
+    tabIconSelected: RestoBrandTheme.accent.primary,
   },
   dark: {
     text: RestoBrandTheme.text.metallicLight,
     background: RestoBrandTheme.background.deepCarbon,
-    tint: RestoBrandTheme.accent.sunsetOrange,
-    icon: RestoBrandTheme.text.metallicSoft,
+    tint: RestoBrandTheme.accent.primary,
+    icon: RestoBrandTheme.accent.secondary,
     tabIconDefault: RestoBrandTheme.text.metallicSoft,
-    tabIconSelected: RestoBrandTheme.accent.sunsetOrange,
+    tabIconSelected: RestoBrandTheme.accent.primary,
   },
 };
 
@@ -75,3 +93,5 @@ export const Fonts = Platform.select({
     mono: "SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace",
   },
 });
+
+export const Typography = typography;

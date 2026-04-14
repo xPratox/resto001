@@ -6,7 +6,10 @@
   "type": "commonjs",
   "scripts": {
     "dev": "node ./node_modules/nodemon/bin/nodemon.js src/server.js",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "dev:web": "npm --prefix ./web run dev",
+    "build:web": "npm --prefix ./web run build",
+    "preview:web": "npm --prefix ./web run preview"
   },
   "keywords": [
     "node",

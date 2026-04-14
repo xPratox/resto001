@@ -47,6 +47,36 @@ const QUICK_NOTES = {
 
 const brand = RestoBrandTheme;
 
+function getStatusBadgeStyle(status?: ActiveOrder['status']) {
+  switch (status) {
+    case 'limpieza':
+      return {
+        backgroundColor: brand.status.warning,
+        borderColor: brand.status.warning,
+        color: brand.text.onAccent,
+      };
+    case 'pagado':
+      return {
+        backgroundColor: brand.status.success,
+        borderColor: brand.status.success,
+        color: brand.text.onAccent,
+      };
+    case 'en cocina':
+      return {
+        backgroundColor: brand.status.danger,
+        borderColor: brand.status.danger,
+        color: brand.text.onAccent,
+      };
+    case 'pendiente':
+    default:
+      return {
+        backgroundColor: brand.status.info,
+        borderColor: brand.status.info,
+        color: brand.text.primary,
+      };
+  }
+}
+
 function getItemNote(item: Partial<OrderItem>) {
   return item.note || item.notas || item.observaciones || 'Sin notas';
 }
@@ -252,6 +282,7 @@ export default function ActiveOrderScreen() {
   };
 
   const quickNotesForSelectedItem = selectedMenuItem ? QUICK_NOTES[selectedMenuItem.category] : QUICK_NOTES.Platos;
+  const statusBadgeTone = getStatusBadgeStyle(order?.status);
 
   const handleSyncOrder = async () => {
     if (!order) {
@@ -476,8 +507,8 @@ export default function ActiveOrderScreen() {
             <View style={styles.orderCard}>
               <View style={styles.orderCardHeader}>
                 <Text style={styles.title}>{table || order?.table || 'Mesa activa'}</Text>
-                <View style={styles.statusBadge}>
-                  <Text style={styles.statusBadgeText}>{String(order?.status || 'cargando').toUpperCase()}</Text>
+                <View style={[styles.statusBadge, { backgroundColor: statusBadgeTone.backgroundColor, borderColor: statusBadgeTone.borderColor }]}>
+                  <Text style={[styles.statusBadgeText, { color: statusBadgeTone.color }]}>{String(order?.status || 'cargando').toUpperCase()}</Text>
                 </View>
               </View>
 
@@ -645,13 +676,17 @@ const styles = StyleSheet.create({
   backButton: {
     position: 'absolute',
     left: 16,
-    height: 40,
-    width: 40,
+    height: 48,
+    width: 48,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 999,
+    backgroundColor: brand.surface.card,
+    borderWidth: 1,
+    borderColor: brand.surface.card,
   },
   screenTitle: {
-    color: brand.text.metallicLight,
+    color: brand.text.primary,
     fontSize: 28,
     fontWeight: '700',
   },
@@ -676,20 +711,17 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   title: {
-    color: brand.text.metallicLight,
+    color: brand.text.primary,
     fontSize: 22,
     fontWeight: '800',
   },
   statusBadge: {
     borderWidth: 1,
-    borderColor: brand.accent.sunsetOrange,
     paddingHorizontal: 14,
-    paddingVertical: 8,
+    paddingVertical: 9,
     borderRadius: 999,
-    backgroundColor: 'transparent',
   },
   statusBadgeText: {
-    color: brand.accent.sunsetOrange,
     fontSize: 12,
     fontWeight: '800',
     textTransform: 'uppercase',
@@ -707,7 +739,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   editingHint: {
-    color: brand.text.metallicMuted,
+    color: brand.text.secondary,
     fontSize: 13,
   },
   loaderWrap: {
@@ -717,13 +749,13 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   loaderText: {
-    color: brand.text.metallicMuted,
+    color: brand.text.secondary,
     fontSize: 14,
   },
   orderCard: {
-    backgroundColor: brand.background.slateAccent,
+    backgroundColor: brand.surface.card,
     borderWidth: 1,
-    borderColor: brand.border.subtle,
+    borderColor: brand.surface.card,
     borderRadius: 14,
     overflow: 'hidden',
   },
@@ -737,7 +769,7 @@ const styles = StyleSheet.create({
   },
   cardDivider: {
     height: 1,
-    backgroundColor: brand.border.subtle,
+    backgroundColor: brand.surface.card,
     marginHorizontal: 0,
   },
   orderItemsList: {
@@ -756,12 +788,12 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   itemName: {
-    color: brand.text.metallicLight,
+    color: brand.text.primary,
     fontSize: 16,
     fontWeight: '700',
   },
   itemNote: {
-    color: brand.text.metallicMuted,
+    color: brand.text.secondary,
     fontSize: 13,
   },
   rowActions: {
@@ -770,7 +802,7 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   itemPrice: {
-    color: brand.text.metallicLight,
+    color: brand.text.primary,
     fontSize: 16,
     fontWeight: '800',
   },
@@ -792,9 +824,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 26,
+    borderRadius: 18,
+    backgroundColor: brand.accent.secondary,
+    paddingHorizontal: 24,
+    paddingVertical: 16,
   },
   openMenuButtonText: {
-    color: brand.accent.sunsetOrange,
+    color: brand.background.deepCarbon,
     fontSize: 17,
     fontWeight: '800',
   },
@@ -802,44 +838,44 @@ const styles = StyleSheet.create({
     display: 'none',
   },
   catalogTitle: {
-    color: brand.text.metallicLight,
+    color: brand.text.primary,
     fontSize: 20,
     fontWeight: '800',
   },
   catalogSubtitle: {
-    color: brand.text.metallicMuted,
+    color: brand.text.secondary,
     fontSize: 13,
   },
   catalogItemCard: {
     borderRadius: 16,
-    backgroundColor: brand.background.slateAccent,
+    backgroundColor: brand.surface.card,
     borderWidth: 1,
-    borderColor: brand.border.subtle,
+    borderColor: brand.surface.card,
     padding: 14,
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12,
   },
   catalogAddButton: {
-    minHeight: 38,
+    minHeight: 46,
     borderRadius: 12,
-    backgroundColor: brand.accent.sunsetOrange,
+    backgroundColor: brand.accent.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 14,
+    paddingHorizontal: 18,
   },
   catalogAddButtonText: {
-    color: brand.text.contrastOnAccent,
+    color: brand.text.onAccent,
     fontSize: 13,
     fontWeight: '800',
   },
   summaryLabel: {
-    color: brand.text.metallicLight,
+    color: brand.text.secondary,
     fontSize: 16,
     fontWeight: '700',
   },
   summaryValue: {
-    color: brand.text.metallicLight,
+    color: brand.text.primary,
     fontSize: 18,
     fontWeight: '800',
   },
@@ -852,18 +888,18 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     gap: 10,
     borderTopWidth: 1,
-    borderTopColor: brand.border.subtle,
+    borderTopColor: brand.surface.card,
   },
   syncButton: {
     minHeight: 60,
     borderRadius: 14,
-    backgroundColor: brand.accent.sunsetOrange,
+    backgroundColor: brand.accent.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
   },
   syncButtonText: {
-    color: brand.text.contrastOnAccent,
+    color: brand.text.onAccent,
     fontSize: 16,
     fontWeight: '800',
   },
@@ -876,7 +912,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   payButtonText: {
-    color: brand.text.metallicLight,
+    color: brand.text.onAccent,
     fontSize: 16,
     fontWeight: '800',
   },
@@ -889,35 +925,33 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   cancelButtonText: {
-    color: brand.text.metallicLight,
+    color: brand.text.onAccent,
     fontSize: 16,
     fontWeight: '800',
   },
   modalBackdrop: {
     flex: 1,
     backgroundColor: brand.overlay.scrim,
-    justifyContent: 'flex-end',
   },
   modalDismissArea: {
     flex: 1,
   },
   modalCard: {
-    maxHeight: '72%',
-    backgroundColor: brand.background.deepCarbon,
+    backgroundColor: brand.surface.card,
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     padding: 20,
     gap: 14,
     borderWidth: 1,
-    borderColor: brand.border.subtle,
+    borderColor: brand.surface.card,
   },
   customizationCard: {
-    backgroundColor: brand.background.slateAccent,
+    backgroundColor: brand.surface.card,
     borderRadius: 24,
     padding: 20,
     gap: 14,
     borderWidth: 1,
-    borderColor: brand.border.subtle,
+    borderColor: brand.surface.card,
     marginHorizontal: 16,
     marginBottom: 24,
   },
@@ -929,8 +963,8 @@ const styles = StyleSheet.create({
     minHeight: 96,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: brand.border.subtle,
-    color: brand.text.metallicLight,
+    borderColor: brand.surface.card,
+    color: brand.text.primary,
     backgroundColor: brand.background.deepCarbon,
     paddingHorizontal: 14,
     paddingVertical: 12,
@@ -944,26 +978,26 @@ const styles = StyleSheet.create({
   quickNoteButton: {
     borderRadius: 999,
     borderWidth: 1,
-    borderColor: brand.border.subtle,
+    borderColor: brand.surface.card,
     backgroundColor: brand.background.deepCarbon,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
   },
   quickNoteText: {
-    color: brand.text.metallicLight,
+    color: brand.text.primary,
     fontSize: 13,
     fontWeight: '700',
   },
   customizationActionButton: {
-    minHeight: 52,
+    minHeight: 56,
     borderRadius: 14,
-    backgroundColor: brand.accent.sunsetOrange,
+    backgroundColor: brand.accent.primary,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
   },
   customizationActionText: {
-    color: brand.text.contrastOnAccent,
+    color: brand.text.onAccent,
     fontSize: 15,
     fontWeight: '800',
   },
@@ -972,7 +1006,7 @@ const styles = StyleSheet.create({
   },
   panelMeta: {
     marginTop: 4,
-    color: brand.text.metallicMuted,
+    color: brand.text.secondary,
     fontSize: 14,
   },
 });

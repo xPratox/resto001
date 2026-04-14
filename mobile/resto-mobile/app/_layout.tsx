@@ -13,7 +13,7 @@ const restoNavigationTheme = {
   ...DarkTheme,
   colors: {
     ...DarkTheme.colors,
-    primary: RestoBrandTheme.accent.sunsetOrange,
+    primary: RestoBrandTheme.accent.primary,
     background: RestoBrandTheme.background.deepCarbon,
     card: RestoBrandTheme.background.slateAccent,
     text: RestoBrandTheme.text.metallicLight,
