@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { RestoBrandTheme } from '@/constants/theme';
+import { useMobileAuth } from '@/lib/auth-session';
 import { API_BASE_URL, SOCKET_URL } from '@/lib/api';
 import { restoSocket } from '@/lib/socket';
 
@@ -220,6 +221,7 @@ function resetOrderState(
 }
 
 export default function HomeScreen() {
+  const { session, logout } = useMobileAuth();
   const router = useRouter();
   const params = useLocalSearchParams<{
     orderId?: string;
@@ -942,7 +944,14 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.safeArea}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.heroCard}>
-          <Text style={styles.overline}>Resto 001</Text>
+          <View style={styles.heroTopRow}>
+            <Text style={styles.overline}>Resto 001</Text>
+            {session?.usuario ? (
+              <Pressable style={styles.sessionPill} onPress={logout}>
+                <Text style={styles.sessionPillText}>{session.usuario} (salir)</Text>
+              </Pressable>
+            ) : null}
+          </View>
           <Text style={styles.title}>Mesonero movil</Text>
           <View style={styles.connectionBadge}>
             <FontAwesome5
@@ -1320,12 +1329,31 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#334155',
   },
+  heroTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
+  },
   overline: {
     color: brand.accent.primary,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 2,
     textTransform: 'uppercase',
+  },
+  sessionPill: {
+    borderWidth: 1,
+    borderColor: 'rgba(34,211,238,0.35)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    backgroundColor: 'rgba(15,23,42,0.86)',
+  },
+  sessionPillText: {
+    color: '#e2e8f0',
+    fontSize: 12,
+    fontWeight: '600',
   },
   title: {
     marginTop: 12,

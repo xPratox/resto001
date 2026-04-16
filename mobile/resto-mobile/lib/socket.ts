@@ -6,3 +6,9 @@ export const restoSocket = io(SOCKET_URL, {
   transports: ['websocket', 'polling'],
   autoConnect: false,
 });
+
+export function setSocketAuthToken(token: string) {
+  restoSocket.auth = {
+    token,
+  };
+}

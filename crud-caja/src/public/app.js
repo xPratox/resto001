@@ -24,7 +24,7 @@ const openReporteBtn = document.getElementById('openReporte');
 const reloadReporteBtn = document.getElementById('reloadReporte');
 const liveNotice = document.getElementById('liveNotice');
 const lastUpdated = document.getElementById('lastUpdated');
-const lastOrderReceived = document.getElementById('lastOrderReceived');
+const logoutButton = document.getElementById('logoutButton');
 const systemStatus = document.getElementById('systemStatus');
 const systemHost = document.getElementById('systemHost');
 const reportTotal = document.getElementById('reportTotal');
@@ -43,6 +43,13 @@ const salesByHourChart = document.getElementById('salesByHourChart');
 const paymentMethodChart = document.getElementById('paymentMethodChart');
 const reportMethodLegend = document.getElementById('reportMethodLegend');
 const currentDateTime = document.getElementById('currentDateTime');
+const authOverlay = document.getElementById('authOverlay');
+const dashboardLayout = document.getElementById('dashboardLayout');
+const authForm = document.getElementById('authForm');
+const authUsuarioInput = document.getElementById('authUsuario');
+const authContrasenaInput = document.getElementById('authContrasena');
+const authSubmitButton = document.getElementById('authSubmit');
+const authError = document.getElementById('authError');
 
 const browserProtocol = window.location.protocol || 'http:';
 const browserHost = window.location.hostname || '127.0.0.1';
@@ -52,6 +59,10 @@ const { API_BASE_URL, SOCKET_URL } = window.RESTO_CONFIG || {
   API_BASE_URL: defaultBackendBaseUrl,
   SOCKET_URL: defaultBackendBaseUrl,
 };
+
+const AUTH_STORAGE_KEY = 'resto001:auth:caja';
+let authToken = '';
+let authUsuario = '';
 
 let socketInstance = null;
 let socketListenersBound = false;
@@ -206,10 +217,6 @@ function updateLastUpdatedLabel() {
       lastUpdated.textContent = 'Sincronizando pedidos...';
     }
 
-    if (lastOrderReceived) {
-      lastOrderReceived.textContent = 'Ultimo pedido: esperando';
-    }
-
     return;
   }
 
@@ -217,19 +224,6 @@ function updateLastUpdatedLabel() {
   if (lastUpdated) {
     lastUpdated.textContent = `Sync ${elapsedSeconds}s`;
   }
-
-  if (!lastOrderReceived) {
-    return;
-  }
-
-  if (!lastRealtimeOrderAt) {
-    lastOrderReceived.textContent = 'Ultimo pedido: esperando';
-    return;
-  }
-
-  const elapsedLabel = formatElapsedFrom(lastRealtimeOrderAt);
-  const tableLabel = lastRealtimeOrderLabel ? ` | ${lastRealtimeOrderLabel}` : '';
-  lastOrderReceived.textContent = `Ultimo pedido: ${elapsedLabel}${tableLabel}`;
 }
 
 function isAnalyticsVisible() {
@@ -295,14 +289,28 @@ function markRealtimeActivity(payload) {
 }
 
 async function requestJson(url, options = {}) {
+  const shouldAttachAuth = authToken && String(url).startsWith(API_BASE_URL);
+  const { headers: customHeaders = {}, ...restOptions } = options;
   const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
+    ...restOptions,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(shouldAttachAuth ? { Authorization: `Bearer ${authToken}` } : {}),
+      ...customHeaders,
+    },
   });
 
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok) {
+    if (res.status === 401 && shouldAttachAuth) {
+      clearCajaSession();
+      setCajaAuthVisibility(false);
+      showAuthError('Tu sesion expiro. Inicia sesion nuevamente.');
+      stopPedidosPolling();
+      cleanupRealtimeResources();
+    }
+
     throw new Error(data.message || 'Error en la solicitud');
   }
 
@@ -315,6 +323,122 @@ function requestCentral(path, options = {}) {
 
 function requestLocal(path, options = {}) {
   return requestJson(path, options);
+}
+
+function loadStoredCajaSession() {
+  try {
+    const raw = window.localStorage.getItem(AUTH_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeCajaSession(session) {
+  window.localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(session));
+}
+
+function clearCajaSession() {
+  authToken = '';
+  authUsuario = '';
+  window.localStorage.removeItem(AUTH_STORAGE_KEY);
+}
+
+function setCajaAuthVisibility(isAuthenticated) {
+  authOverlay?.classList.toggle('hidden', isAuthenticated);
+  dashboardLayout?.classList.toggle('hidden', !isAuthenticated);
+}
+
+function showAuthError(message) {
+  if (!authError) {
+    return;
+  }
+
+  if (!message) {
+    authError.textContent = '';
+    authError.classList.add('hidden');
+    return;
+  }
+
+  authError.textContent = message;
+  authError.classList.remove('hidden');
+}
+
+async function loginCajaUser(usuario, contrasena) {
+  return requestJson(`${API_BASE_URL}/api/login`, {
+    method: 'POST',
+    body: JSON.stringify({ usuario, contrasena }),
+  });
+}
+
+async function ensureCajaLogin() {
+  const storedSession = loadStoredCajaSession();
+
+  if (storedSession?.token && storedSession?.rol === 'caja') {
+    authToken = storedSession.token;
+    authUsuario = storedSession.usuario || '';
+    setCajaAuthVisibility(true);
+    return;
+  }
+
+  setCajaAuthVisibility(false);
+
+  await new Promise((resolve) => {
+    if (!authForm || !authUsuarioInput || !authContrasenaInput) {
+      resolve();
+      return;
+    }
+
+    const submitHandler = async (event) => {
+      event.preventDefault();
+
+      const usuario = String(authUsuarioInput.value || '').trim();
+      const contrasena = String(authContrasenaInput.value || '').trim();
+
+      if (!usuario || !contrasena) {
+        showAuthError('Debes completar usuario y contrasena.');
+        return;
+      }
+
+      if (authSubmitButton) {
+        authSubmitButton.disabled = true;
+        authSubmitButton.textContent = 'Ingresando...';
+      }
+
+      showAuthError('');
+
+      try {
+        const data = await loginCajaUser(usuario, contrasena);
+
+        if (data?.rol !== 'caja') {
+          throw new Error('Este modulo solo permite usuarios con rol caja.');
+        }
+
+        authToken = data.token;
+        authUsuario = data.usuario || '';
+        storeCajaSession({
+          token: authToken,
+          rol: data.rol,
+          usuario: authUsuario,
+        });
+
+        setCajaAuthVisibility(true);
+        authContrasenaInput.value = '';
+        showLiveNotice(`Sesion iniciada: ${authUsuario}`, 'success');
+        authForm.removeEventListener('submit', submitHandler);
+        resolve();
+      } catch (error) {
+        showAuthError(error.message || 'Credenciales invalidas.');
+      } finally {
+        if (authSubmitButton) {
+          authSubmitButton.disabled = false;
+          authSubmitButton.textContent = 'Entrar';
+        }
+      }
+    };
+
+    authForm.addEventListener('submit', submitHandler);
+  });
 }
 
 function formatShortDate(dateInput) {
@@ -973,6 +1097,17 @@ function handleTableSelect(mesaId) {
   }
 
   const normalizedMesaId = String(mesaId || '').trim();
+  if (!normalizedMesaId) {
+    mesaPagoSelect.value = '';
+    paymentAmountDraft = '';
+    syncPaymentFormState();
+    return;
+  }
+
+  if (!activePaymentTables.some((table) => table.mesa === normalizedMesaId)) {
+    return;
+  }
+
   mesaPagoSelect.value = normalizedMesaId;
   paymentAmountDraft = '';
   syncPaymentFormState();
@@ -1489,7 +1624,7 @@ async function ensureSocket() {
   }
 
   if (!socketInstance) {
-    socketInstance = await window.getRestoSocket();
+    socketInstance = await window.getRestoSocket(authToken);
   }
 
   if (socketListenersBound) {
@@ -1624,7 +1759,7 @@ pagoForm.addEventListener('submit', async (event) => {
     const { pendingAmount, enteredAmountUsd: montoRecibido, isAmountInvalid, exceedsPending, missingRateForCurrency } = paymentState;
 
     if (!mesa) {
-      throw new Error('Debes seleccionar una mesa ocupada para cobrar.');
+      throw new Error('Debes usar el boton Seleccionar en la tarjeta del pedido para cobrar.');
     }
 
     if (missingRateForCurrency) {
@@ -1755,11 +1890,18 @@ openReporteBtn.addEventListener('click', async () => {
   }
 });
 
+logoutButton?.addEventListener('click', () => {
+  cleanupRealtimeResources();
+  clearCajaSession();
+  window.location.reload();
+});
+
 window.addEventListener('beforeunload', cleanupRealtimeResources);
 window.addEventListener('pagehide', cleanupRealtimeResources);
 
 (async function init() {
   syncAnalyticsVisibility();
+  await ensureCajaLogin();
   updateSystemStatusLabel(false);
   hydratePersistedExchangeRates();
   syncPaymentFormState();

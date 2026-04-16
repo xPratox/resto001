@@ -86,7 +86,7 @@ async function parseJsonResponse(response) {
   return data
 }
 
-function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
+function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken }) {
   const [step, setStep] = useState(1)
   const [selectedCategory, setSelectedCategory] = useState('Bebidas')
   const [selectedMenuItem, setSelectedMenuItem] = useState(null)
@@ -222,6 +222,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder }) {
   }, [currentOrder.table])
 
   useRestoRealtime({
+    authToken,
     fetchTableStatuses,
     syncCurrentOrder,
     setTableStatuses,

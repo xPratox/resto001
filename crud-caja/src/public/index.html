@@ -13,7 +13,28 @@
     <div class="bg-shape shape-a"></div>
     <div class="bg-shape shape-b"></div>
 
-    <main class="layout">
+    <section id="authOverlay" class="auth-overlay" aria-live="polite">
+      <article class="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitleCaja">
+        <p class="auth-kicker">Resto 001</p>
+        <h1 id="authTitleCaja">Login caja</h1>
+        <p class="auth-subtitle">Inicia sesion para acceder al panel de cobros.</p>
+
+        <form id="authForm" class="auth-form">
+          <label>
+            <span>Usuario</span>
+            <input id="authUsuario" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            <span>Contrasena</span>
+            <input id="authContrasena" type="password" autocomplete="current-password" required />
+          </label>
+          <p id="authError" class="auth-error hidden"></p>
+          <button id="authSubmit" type="submit">Entrar</button>
+        </form>
+      </article>
+    </section>
+
+    <main id="dashboardLayout" class="layout hidden">
       <header class="hero">
         <div class="hero-head">
           <div class="hero-identity">
@@ -54,7 +75,7 @@
               <span id="systemHost" class="system-host status-accent">--</span>
             </div>
             <p id="currentDateTime" class="sync-secondary sync-secondary--header sync-secondary--time">--</p>
-            <p id="lastOrderReceived" class="sync-secondary sync-secondary--header sync-secondary--order">Ultimo pedido: --</p>
+            <button type="button" id="logoutButton" class="sync-logout-btn">Cerrar sesion</button>
             <p id="lastUpdated" class="hidden">Sincronizando pedidos...</p>
           </div>
         </div>
@@ -73,12 +94,9 @@
             </div>
 
             <form id="pagoForm" class="stack compact-form">
-              <label class="mesa-select-field">
-                <span>Seleccionar Mesa</span>
-                <select id="mesaPago" required>
-                  <option value="">Selecciona una mesa ocupada</option>
-                </select>
-              </label>
+              <select id="mesaPago" class="hidden" aria-hidden="true" tabindex="-1">
+                <option value="">Selecciona una mesa ocupada</option>
+              </select>
               <div class="form-two-columns">
                 <label>
                   <span>Metodo</span>

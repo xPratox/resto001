@@ -58,6 +58,7 @@ function patchTableStatuses(previousTables, payload) {
 }
 
 export function useRestoRealtime({
+  authToken,
   fetchTableStatuses,
   syncCurrentOrder,
   setTableStatuses,
@@ -93,7 +94,7 @@ export function useRestoRealtime({
   }, [currentOrder, fetchTableStatuses, initialOrder, isDirty, onRemoteRelease, syncCurrentOrder])
 
   useEffect(() => {
-    const socket = createRestoSocket()
+    const socket = createRestoSocket(authToken)
 
     const handleSocketConnect = () => {
       setIsCajaConnected(true)
@@ -175,6 +176,7 @@ export function useRestoRealtime({
       setIsCajaConnected(false)
     }
   }, [
+    authToken,
     normalizeOrder,
     setCurrentOrder,
     setEditableItems,

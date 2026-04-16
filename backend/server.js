@@ -5,7 +5,9 @@ const http = require('http');
 const { URL } = require('url');
 const chalkModule = require('chalk');
 const { addHours, endOfDay, parse, startOfDay } = require('date-fns');
+const jwt = require('jsonwebtoken');
 const { sanitizeKitchenOrder, shouldShowKitchenOrder } = require('./middleware/kitchenPayload');
+const { User } = require('./models/User');
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
@@ -68,6 +70,59 @@ const corsOptions = {
 	credentials: false,
 };
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/resto001';
+const JWT_SECRET = process.env.JWT_SECRET || 'cambiar-este-secreto-en-produccion';
+const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
+
+function parseMesoneroUsers(rawValue) {
+	return String(rawValue || '')
+		.split(',')
+		.map((entry) => entry.trim())
+		.filter(Boolean)
+		.map((entry) => {
+			const [usuarioRaw, contrasenaRaw] = entry.split(':');
+			const usuario = String(usuarioRaw || '').trim().toLowerCase();
+			const contrasena = String(contrasenaRaw || '').trim();
+
+			if (!usuario || !contrasena) {
+				return null;
+			}
+
+			return {
+				rol: 'mesonero',
+				usuario,
+				contrasena,
+			};
+		})
+		.filter(Boolean);
+}
+
+const baseAuthUsers = [
+	{
+		rol: 'cocina',
+		usuario: String(process.env.AUTH_COCINA_USUARIO || 'cocina').trim().toLowerCase(),
+		contrasena: String(process.env.AUTH_COCINA_CLAVE || 'cocina123').trim(),
+	},
+	{
+		rol: 'caja',
+		usuario: String(process.env.AUTH_CAJA_USUARIO || 'marianjela').trim().toLowerCase(),
+		contrasena: String(process.env.AUTH_CAJA_CLAVE || '1234').trim(),
+	},
+	{
+		rol: 'mesonero',
+		usuario: String(process.env.AUTH_MESONERO_USUARIO || 'santiago').trim().toLowerCase(),
+		contrasena: String(process.env.AUTH_MESONERO_CLAVE || '1234').trim(),
+	},
+];
+
+const extraMesoneroUsers = parseMesoneroUsers(process.env.AUTH_MESONERO_USUARIOS);
+
+const DEFAULT_AUTH_USERS = [...baseAuthUsers, ...extraMesoneroUsers].filter((candidate, index, candidates) => {
+	if (!candidate?.usuario || !candidate?.contrasena || !candidate?.rol) {
+		return false;
+	}
+
+	return candidates.findIndex((item) => item.usuario === candidate.usuario) === index;
+});
 const HISTORY_TIMEZONE = process.env.HISTORY_TIMEZONE || 'America/Caracas';
 const EXCHANGE_RATE_TIMEZONE = process.env.EXCHANGE_RATE_TIMEZONE || HISTORY_TIMEZONE;
 const STATS_UTC_OFFSET_HOURS = Number(process.env.STATS_UTC_OFFSET_HOURS || 4);
@@ -756,6 +811,47 @@ function normalizePaymentMethod(method) {
 	return normalized;
 }
 
+async function ensureDefaultUsers() {
+	for (const candidate of DEFAULT_AUTH_USERS) {
+		if (!candidate.usuario || !candidate.contrasena || !candidate.rol) {
+			continue;
+		}
+
+		const existingUser = await User.findOne({ usuario: candidate.usuario });
+
+		if (existingUser) {
+			let needsSave = false;
+
+			if (existingUser.rol !== candidate.rol) {
+				existingUser.rol = candidate.rol;
+				needsSave = true;
+			}
+
+			const hasExpectedPassword = await existingUser.validarContrasena(candidate.contrasena);
+
+			if (!hasExpectedPassword) {
+				existingUser.contrasena = candidate.contrasena;
+				needsSave = true;
+			}
+
+			if (needsSave) {
+				await existingUser.save();
+				brandLog.success(`Usuario inicial actualizado: ${candidate.usuario} (${candidate.rol})`);
+			}
+
+			continue;
+		}
+
+		await User.create({
+			usuario: candidate.usuario,
+			contrasena: candidate.contrasena,
+			rol: candidate.rol,
+		});
+
+		brandLog.success(`Usuario inicial creado: ${candidate.usuario} (${candidate.rol})`);
+	}
+}
+
 const io = new Server(server, {
 	cors: {
 		origin: resolveCorsOrigin,
@@ -766,9 +862,84 @@ const io = new Server(server, {
 	},
 });
 
+io.use((socket, next) => {
+	const token = String(socket.handshake.auth?.token || '').trim();
+
+	if (!token) {
+		return next(new Error('Token requerido para conectar socket'));
+	}
+
+	try {
+		socket.authUser = jwt.verify(token, JWT_SECRET);
+		return next();
+	} catch (_error) {
+		return next(new Error('Token de socket invalido o expirado'));
+	}
+});
+
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 app.use(express.json());
+
+app.use('/api', (req, res, next) => {
+	if (req.path === '/login' || req.path === '/health') {
+		return next();
+	}
+
+	return authenticateRequest(req, res, next);
+});
+
+function createAuthToken(user) {
+	return jwt.sign(
+		{
+			sub: String(user._id),
+			usuario: user.usuario,
+			rol: user.rol,
+		},
+		JWT_SECRET,
+		{
+			expiresIn: JWT_EXPIRES_IN,
+		}
+	);
+}
+
+function authenticateRequest(req, res, next) {
+	const authHeader = String(req.headers.authorization || '');
+	const [scheme, token] = authHeader.split(' ');
+
+	if (scheme !== 'Bearer' || !token) {
+		return res.status(401).json({
+			ok: false,
+			message: 'Token requerido. Usa Authorization: Bearer <token>.',
+		});
+	}
+
+	try {
+		const payload = jwt.verify(token, JWT_SECRET);
+		req.authUser = payload;
+		return next();
+	} catch (_error) {
+		return res.status(401).json({
+			ok: false,
+			message: 'Token invalido o expirado.',
+		});
+	}
+}
+
+function authorizeRoles(...allowedRoles) {
+	return (req, res, next) => {
+		const userRole = String(req.authUser?.rol || '').toLowerCase();
+
+		if (!allowedRoles.includes(userRole)) {
+			return res.status(403).json({
+				ok: false,
+				message: `Acceso denegado para rol ${userRole || 'desconocido'}.`,
+			});
+		}
+
+		return next();
+	};
+}
 
 function broadcastGlobalOrder(pedido) {
 	if (!pedido || typeof pedido !== 'object') {
@@ -821,6 +992,55 @@ app.get('/api/health', (req, res) => {
 		ok: true,
 		mongoState: mongoose.connection.readyState,
 	});
+});
+
+app.post('/api/login', async (req, res) => {
+	const usuario = String(req.body?.usuario || '').trim().toLowerCase();
+	const contrasena = String(req.body?.contrasena || '');
+
+	if (!usuario || !contrasena) {
+		return res.status(400).json({
+			ok: false,
+			message: 'Debes enviar usuario y contrasena.',
+		});
+	}
+
+	try {
+		const user = await User.findOne({ usuario });
+
+		if (!user) {
+			return res.status(401).json({
+				ok: false,
+				message: 'Credenciales invalidas.',
+			});
+		}
+
+		const isValidPassword = await user.validarContrasena(contrasena);
+
+		if (!isValidPassword) {
+			return res.status(401).json({
+				ok: false,
+				message: 'Credenciales invalidas.',
+			});
+		}
+
+		const token = createAuthToken(user);
+
+		return res.status(200).json({
+			ok: true,
+			usuario: user.usuario,
+			rol: user.rol,
+			token,
+			tokenType: 'Bearer',
+			expiresIn: JWT_EXPIRES_IN,
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: 'Error procesando login.',
+			error: error.message,
+		});
+	}
 });
 
 app.get('/api/menu', (req, res) => {
@@ -1036,18 +1256,10 @@ app.get('/api/stats/ventas', async (req, res) => {
 	}
 });
 
-app.put('/api/exchange-rate/today', async (req, res) => {
-	const moduleName = String(req.headers['x-resto-module'] || '').trim().toLowerCase();
+app.put('/api/exchange-rate/today', authorizeRoles('caja'), async (req, res) => {
 	const parsedRate = parseCurrency(req.body?.rate);
 	const rateType = normalizeRateType(req.query?.type || req.body?.type);
 	const { model, label } = getRateModelByType(rateType);
-
-	if (moduleName !== 'caja') {
-		return res.status(403).json({
-			ok: false,
-			message: `Solo caja puede asignar la tasa ${label} diaria.`,
-		});
-	}
 
 	if (!Number.isFinite(parsedRate) || parsedRate <= 0) {
 		return res.status(400).json({
@@ -1164,7 +1376,7 @@ app.get('/api/tables/status', async (req, res) => {
 	}
 });
 
-app.get('/api/orders/history', async (req, res) => {
+app.get('/api/orders/history', authorizeRoles('caja'), async (req, res) => {
 	try {
 		const selectedRange = resolveHistoryRange(String(req.query?.range || 'today').trim().toLowerCase());
 		const [history] = await Order.aggregate(buildPaidOrdersHistoryPipeline());
@@ -1248,7 +1460,7 @@ app.get('/api/orders/history', async (req, res) => {
 	}
 });
 
-app.get('/api/kitchen/orders', async (_req, res) => {
+app.get('/api/kitchen/orders', authorizeRoles('cocina'), async (_req, res) => {
 	try {
 		const orders = await Order.find({
 			status: ORDER_STATUS.KITCHEN,
@@ -1273,7 +1485,7 @@ app.get('/api/kitchen/orders', async (_req, res) => {
 	}
 });
 
-app.patch('/api/kitchen/orders/:id/ready', async (req, res) => {
+app.patch('/api/kitchen/orders/:id/ready', authorizeRoles('cocina'), async (req, res) => {
 	try {
 		const order = await Order.findById(req.params.id);
 
@@ -1318,7 +1530,7 @@ app.patch('/api/kitchen/orders/:id/ready', async (req, res) => {
 	}
 });
 
-app.get('/api/orders/:id', async (req, res) => {
+app.get('/api/orders/:id', authorizeRoles('mesonero', 'caja'), async (req, res) => {
 	try {
 		const order = await Order.findById(req.params.id);
 
@@ -1342,7 +1554,7 @@ app.get('/api/orders/:id', async (req, res) => {
 	}
 });
 
-app.get('/api/orders/active/table/:table', async (req, res) => {
+app.get('/api/orders/active/table/:table', authorizeRoles('mesonero', 'caja'), async (req, res) => {
 	try {
 		await repairReleasedPaidOrdersForTable(req.params.table);
 
@@ -1376,7 +1588,7 @@ app.get('/api/orders/active/table/:table', async (req, res) => {
 	}
 });
 
-app.post('/api/orders', async (req, res) => {
+app.post('/api/orders', authorizeRoles('mesonero'), async (req, res) => {
 	const { table, tableId, items, cliente_nombre, seccion } = req.body ?? {};
 	const normalizedTable = typeof tableId === 'string' && tableId.trim()
 		? tableId.trim()
@@ -1504,7 +1716,7 @@ app.post('/api/orders', async (req, res) => {
 	}
 });
 
-app.patch('/api/orders/:id/modify', async (req, res) => {
+app.patch('/api/orders/:id/modify', authorizeRoles('mesonero'), async (req, res) => {
 	const { id } = req.params;
 	const { action, item } = req.body;
 
@@ -1600,7 +1812,7 @@ app.patch('/api/orders/:id/modify', async (req, res) => {
 	}
 });
 
-app.patch('/api/orders/:id/update-items', async (req, res) => {
+app.patch('/api/orders/:id/update-items', authorizeRoles('mesonero'), async (req, res) => {
 	const { id } = req.params;
 	const { items } = req.body;
 
@@ -1664,7 +1876,7 @@ app.patch('/api/orders/:id/update-items', async (req, res) => {
 	}
 });
 
-app.patch('/api/orders/:id/sync', async (req, res) => {
+app.patch('/api/orders/:id/sync', authorizeRoles('mesonero'), async (req, res) => {
 	const { id } = req.params;
 	const { items } = req.body;
 
@@ -1725,7 +1937,7 @@ app.patch('/api/orders/:id/sync', async (req, res) => {
 	}
 });
 
-app.patch('/api/orders/:id/pay', async (req, res) => {
+app.patch('/api/orders/:id/pay', authorizeRoles('caja'), async (req, res) => {
 	const { id } = req.params;
 	const { items, montoRecibido, metodo = 'efectivo', estado = 'completado' } = req.body ?? {};
 
@@ -1877,7 +2089,7 @@ async function releaseTableByOrder(orderId) {
 	);
 }
 
-app.patch('/api/tables/:id/liberar', async (req, res) => {
+app.patch('/api/tables/:id/liberar', authorizeRoles('mesonero', 'caja'), async (req, res) => {
 	const tableId = req.params.id;
 
 	try {
@@ -1926,7 +2138,7 @@ app.patch('/api/tables/:id/liberar', async (req, res) => {
 	}
 });
 
-app.patch('/api/orders/:id/release-table', async (req, res) => {
+app.patch('/api/orders/:id/release-table', authorizeRoles('mesonero', 'caja'), async (req, res) => {
 	const { id } = req.params;
 
 	try {
@@ -1971,7 +2183,7 @@ app.patch('/api/orders/:id/release-table', async (req, res) => {
 	}
 });
 
-app.delete('/api/orders/:id', async (req, res) => {
+app.delete('/api/orders/:id', authorizeRoles('mesonero'), async (req, res) => {
 	const { id } = req.params;
 
 	try {
@@ -2025,6 +2237,7 @@ async function startServer() {
 	try {
 		await mongoose.connect(MONGODB_URI);
 		brandLog.success(`MongoDB conectado en ${MONGODB_URI}`);
+		await ensureDefaultUsers();
 
 		try {
 			await listenOnConfiguredPort();

@@ -27,8 +27,13 @@
     return socketClientLoader;
   }
 
-  globalScope.getRestoSocket = async function getRestoSocket() {
+  globalScope.getRestoSocket = async function getRestoSocket(token) {
     if (socketSingleton) {
+      if (token) {
+        socketSingleton.auth = {
+          token,
+        };
+      }
       return socketSingleton;
     }
 
@@ -36,6 +41,9 @@
     socketSingleton = ioClient(socketUrl, {
       transports: ['websocket'],
       autoConnect: true,
+      auth: {
+        token,
+      },
     });
 
     return socketSingleton;

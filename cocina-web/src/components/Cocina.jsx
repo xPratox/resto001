@@ -41,7 +41,7 @@ async function parseJsonResponse(response) {
   return payload
 }
 
-export default function Cocina() {
+export default function Cocina({ authToken, session, onLogout }) {
   const [pedidos, setPedidos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -166,6 +166,9 @@ export default function Cocina() {
     restoSocket.on('connect_error', handleConnectError)
 
     if (!restoSocket.connected) {
+      restoSocket.auth = {
+        token: authToken,
+      }
       restoSocket.connect()
     }
 
@@ -176,7 +179,7 @@ export default function Cocina() {
       restoSocket.off('kitchen_order_removed', handleKitchenRemoved)
       restoSocket.off('connect_error', handleConnectError)
     }
-  }, [])
+  }, [authToken])
 
   async function handleReady(orderId) {
     if (dispatchingIds.includes(orderId)) {
@@ -228,13 +231,26 @@ export default function Cocina() {
             </p>
           </div>
 
-          <div className="rounded-2xl border border-cyan-500/30 bg-[#0b1220] px-4 py-3 text-right shadow-cyan">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-metallicMuted">
-              En cola
-            </p>
-            <p className="mt-1 font-display text-4xl font-semibold text-resto-accent">
-              {totalPedidos}
-            </p>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex items-center gap-2 rounded-lg border border-cyan-500/30 bg-slate-900/80 px-3 py-2 text-xs text-slate-100">
+              <span>{session?.usuario} ({session?.rol})</span>
+              <button
+                type="button"
+                className="rounded-md border border-slate-600 px-2 py-1 transition hover:border-cyan-400/50"
+                onClick={onLogout}
+              >
+                Salir
+              </button>
+            </div>
+
+            <div className="rounded-2xl border border-cyan-500/30 bg-[#0b1220] px-4 py-3 text-right shadow-cyan">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-metallicMuted">
+                En cola
+              </p>
+              <p className="mt-1 font-display text-4xl font-semibold text-resto-accent">
+                {totalPedidos}
+              </p>
+            </div>
           </div>
         </header>
 
