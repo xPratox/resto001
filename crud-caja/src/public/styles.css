@@ -1259,6 +1259,57 @@ button.secondary {
     linear-gradient(180deg, rgba(17, 24, 39, 0.98), rgba(15, 23, 42, 0.94));
 }
 
+.report-kpi-card--tables {
+  display: grid;
+  gap: 12px;
+}
+
+.report-top-mesas-list {
+  display: grid;
+  gap: 10px;
+}
+
+.report-top-mesa-item {
+  display: grid;
+  gap: 8px;
+}
+
+.report-top-mesa-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #E2E8F0;
+  font-size: 13px;
+}
+
+.report-top-mesa-head strong {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.report-top-mesa-head span {
+  color: #94A3B8;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.report-top-mesa-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(51, 65, 85, 0.72);
+}
+
+.report-top-mesa-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #22D3EE 0%, #00D8FF 100%);
+  box-shadow: 0 0 16px rgba(0, 216, 255, 0.32);
+}
+
 .report-label {
   margin: 0;
   color: var(--text-metallic-muted);

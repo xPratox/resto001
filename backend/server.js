@@ -529,6 +529,7 @@ const orderSchema = new mongoose.Schema(
 	{
 		table: { type: String, required: true, trim: true },
 		cliente_nombre: { type: String, default: '', trim: true },
+		mesonero_usuario: { type: String, default: '', trim: true, lowercase: true },
 		seccion: { type: String, enum: ['Sala', 'Terraza'], required: true, default: 'Sala', trim: true },
 		items: [
 			{
@@ -695,6 +696,7 @@ function buildPaidOrdersHistoryPipeline() {
 							_id: 1,
 							table: 1,
 							cliente_nombre: 1,
+							mesonero_usuario: { $ifNull: ['$mesonero_usuario', ''] },
 							status: 1,
 							hora_pago: '$reportDateSource',
 							paymentMethod: '$historialPagos.metodo',
@@ -1590,6 +1592,7 @@ app.get('/api/orders/active/table/:table', authorizeRoles('mesonero', 'caja'), a
 
 app.post('/api/orders', authorizeRoles('mesonero'), async (req, res) => {
 	const { table, tableId, items, cliente_nombre, seccion } = req.body ?? {};
+	const mesoneroUsuario = String(req.authUser?.usuario || '').trim().toLowerCase();
 	const normalizedTable = typeof tableId === 'string' && tableId.trim()
 		? tableId.trim()
 		: typeof table === 'string'
@@ -1637,6 +1640,7 @@ app.post('/api/orders', authorizeRoles('mesonero'), async (req, res) => {
 						? {
 							$set: {
 								cliente_nombre: pendingOrder.cliente_nombre || normalizedClientName,
+								mesonero_usuario: mesoneroUsuario || pendingOrder.mesonero_usuario || '',
 								seccion: normalizedSection,
 								status: ORDER_STATUS.KITCHEN,
 								preparedAt: null,
@@ -1646,6 +1650,7 @@ app.post('/api/orders', authorizeRoles('mesonero'), async (req, res) => {
 						}
 						: {
 							$set: {
+								mesonero_usuario: mesoneroUsuario || pendingOrder.mesonero_usuario || '',
 								seccion: normalizedSection,
 								status: ORDER_STATUS.KITCHEN,
 								preparedAt: null,
@@ -1689,6 +1694,7 @@ app.post('/api/orders', authorizeRoles('mesonero'), async (req, res) => {
 		const order = await Order.create({
 			table: normalizedTable,
 			cliente_nombre: normalizedClientName,
+			mesonero_usuario: mesoneroUsuario,
 			seccion: normalizedSection,
 			items: normalizedItems,
 			total: itemsTotal,
@@ -1790,6 +1796,9 @@ app.patch('/api/orders/:id/modify', authorizeRoles('mesonero'), async (req, res)
 		}
 
 		order.seccion = order.seccion || getTableDefinition(order.table)?.section || 'Sala';
+		if (String(req.authUser?.usuario || '').trim()) {
+			order.mesonero_usuario = String(req.authUser.usuario).trim().toLowerCase();
+		}
 		if (action === 'add') {
 			order.status = ORDER_STATUS.KITCHEN;
 			order.preparedAt = null;
@@ -1851,6 +1860,7 @@ app.patch('/api/orders/:id/update-items', authorizeRoles('mesonero'), async (req
 				$set: {
 					items: normalizedItems,
 					total,
+					mesonero_usuario: String(req.authUser?.usuario || '').trim().toLowerCase() || order.mesonero_usuario || '',
 					status: ORDER_STATUS.KITCHEN,
 					preparedAt: null,
 				},
@@ -1912,6 +1922,7 @@ app.patch('/api/orders/:id/sync', authorizeRoles('mesonero'), async (req, res) =
 				$set: {
 					items: normalizedItems,
 					total: newTotal,
+					mesonero_usuario: String(req.authUser?.usuario || '').trim().toLowerCase() || order.mesonero_usuario || '',
 					status: ORDER_STATUS.KITCHEN,
 					preparedAt: null,
 				},

@@ -32,7 +32,8 @@ const reportMeta = document.getElementById('reportMeta');
 const reportDailyCards = document.getElementById('reportDailyCards');
 const reportTotalBs = document.getElementById('reportTotalBs');
 const reportTotalCop = document.getElementById('reportTotalCop');
-const reportAvgTicket = document.getElementById('reportAvgTicket');
+const reportTopMesasMeta = document.getElementById('reportTopMesasMeta');
+const reportTopMesasList = document.getElementById('reportTopMesasList');
 const reportVolumeValue = document.getElementById('reportVolumeValue');
 const reportCleaningMeta = document.getElementById('reportCleaningMeta');
 const reportRangeMeta = document.getElementById('reportRangeMeta');
@@ -893,6 +894,7 @@ function normalizePedido(order) {
     montoPagado,
     restante,
     clienteNombre: order.cliente_nombre || '',
+    mesoneroUsuario: order.mesonero_usuario || '',
     items: (order.items || []).map((item) => ({
       cantidad: 1,
       nombre: item.name,
@@ -1439,6 +1441,7 @@ function renderPedidos(items) {
           <p class="mesa-kicker">Mesa</p>
           <p class="mesa-value">${pedido.mesa}</p>
           <p class="cliente-name">${pedido.clienteNombre || 'Cliente sin nombre'}</p>
+          <p class="cliente-name">Mesonero: ${pedido.mesoneroUsuario || 'N/D'}</p>
         </div>
         <span class="badge ${statusMeta.badgeClass}">${statusMeta.label}</span>
       </div>
@@ -1494,6 +1497,61 @@ function renderReportSummary(summaryByDay, daySummary) {
   }
 }
 
+function buildTopMesasDataset(transactions) {
+  const mesonerosCounter = new Map();
+
+  (transactions || []).forEach((venta) => {
+    const mesonero = String(venta?.mesonero_usuario || '').trim() || 'Sin mesonero';
+
+    mesonerosCounter.set(mesonero, (mesonerosCounter.get(mesonero) || 0) + 1);
+  });
+
+  const topMesas = Array.from(mesonerosCounter.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([mesonero, cantidad]) => ({ mesonero, cantidad }));
+
+  return {
+    totalMesasAtendidas: mesonerosCounter.size,
+    topMesas,
+  };
+}
+
+function renderTopMesasAttended(transactions) {
+  if (!reportTopMesasMeta || !reportTopMesasList) {
+    return;
+  }
+
+  const { totalMesasAtendidas, topMesas } = buildTopMesasDataset(transactions);
+
+  reportTopMesasMeta.textContent = `${totalMesasAtendidas} mesoneros activos en este periodo`;
+
+  if (!topMesas.length) {
+    reportTopMesasList.innerHTML = '<p class="report-meta">Sin datos de mesoneros por ahora.</p>';
+    return;
+  }
+
+  const maxCount = Math.max(...topMesas.map((item) => item.cantidad), 1);
+
+  reportTopMesasList.innerHTML = topMesas
+    .map((item) => {
+      const progress = Math.max(8, Math.round((item.cantidad / maxCount) * 100));
+
+      return `
+        <article class="report-top-mesa-item">
+          <div class="report-top-mesa-head">
+            <strong>${item.mesonero}</strong>
+            <span>${item.cantidad} mesas atendidas</span>
+          </div>
+          <div class="report-top-mesa-track" role="img" aria-label="${item.mesonero}: ${item.cantidad} mesas atendidas en el periodo">
+            <span class="report-top-mesa-fill" style="width:${progress}%"></span>
+          </div>
+        </article>
+      `;
+    })
+    .join('');
+}
+
 function renderReporte(history) {
   latestReportPayload = history;
   const transactions = history?.transactions || [];
@@ -1507,9 +1565,7 @@ function renderReporte(history) {
     reportDate: rangeLabel,
   });
 
-  if (reportAvgTicket) {
-    reportAvgTicket.textContent = formatMoney(kpis.averageTicket || 0);
-  }
+  renderTopMesasAttended(transactions);
 
   if (reportVolumeValue) {
     reportVolumeValue.textContent = `${kpis.totalOrders || 0} ordenes`;
@@ -1529,7 +1585,7 @@ function renderReporte(history) {
   reporteList.innerHTML = '';
 
   if (!transactions.length) {
-    reporteList.innerHTML = '<tr><td colspan="5" class="report-empty-cell">No hay ventas para reportar en este periodo.</td></tr>';
+    reporteList.innerHTML = '<tr><td colspan="6" class="report-empty-cell">No hay ventas para reportar en este periodo.</td></tr>';
     return;
   }
 
@@ -1538,6 +1594,7 @@ function renderReporte(history) {
       <tr>
         <td class="report-table-id">${String(venta._id || '').slice(-8)}</td>
         <td>${venta.table}${venta.cliente_nombre ? `<span class="report-client-inline"> · ${venta.cliente_nombre}</span>` : ''}</td>
+        <td>${venta.mesonero_usuario || 'N/D'}</td>
         <td class="report-table-money">${formatMoney(venta.paymentAmount)}</td>
         <td>${formatReportMethod(venta.paymentMethod)}</td>
         <td class="report-table-time">${formatReportHour(venta.hora_pago)}</td>
