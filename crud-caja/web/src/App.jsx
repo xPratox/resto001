@@ -127,6 +127,29 @@ function normalizePedido(order) {
   const montoPagado = Number(order.montoPagado || 0)
   const restante = Math.max(0, Number((total - montoPagado).toFixed(2)))
 
+  const groupedItems = new Map()
+
+  ;(order.items || []).forEach((item) => {
+    const nombre = item.name
+    const precioUnitario = Number(item.price || 0)
+    const nota = item.note || 'Sin notas'
+    const cantidad = Number(item.cantidad || 1)
+    const key = `${nombre}::${nota}::${precioUnitario}`
+    const existing = groupedItems.get(key)
+
+    if (existing) {
+      existing.cantidad += Number.isFinite(cantidad) && cantidad > 0 ? cantidad : 1
+      return
+    }
+
+    groupedItems.set(key, {
+      cantidad: Number.isFinite(cantidad) && cantidad > 0 ? cantidad : 1,
+      nombre,
+      precioUnitario,
+      nota,
+    })
+  })
+
   return {
     _id: order._id,
     mesa: order.table,
@@ -135,12 +158,7 @@ function normalizePedido(order) {
     montoPagado,
     restante,
     clienteNombre: order.cliente_nombre || '',
-    items: (order.items || []).map((item) => ({
-      cantidad: Number(item.cantidad || 1),
-      nombre: item.name,
-      precioUnitario: Number(item.price || 0),
-      nota: item.note || 'Sin notas',
-    })),
+    items: Array.from(groupedItems.values()),
   }
 }
 

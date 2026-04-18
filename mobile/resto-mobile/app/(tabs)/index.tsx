@@ -210,6 +210,7 @@ function resetOrderState(
   setStep: React.Dispatch<React.SetStateAction<1 | 2 | 3>>,
   setSelectedPlate: React.Dispatch<React.SetStateAction<MenuItem | null>>,
   setNote: React.Dispatch<React.SetStateAction<string>>,
+  setSelectedQuantity: React.Dispatch<React.SetStateAction<number>>,
   setIsNotesModalVisible: React.Dispatch<React.SetStateAction<boolean>>,
 ) {
   setCurrentOrder(initialOrder);
@@ -217,6 +218,7 @@ function resetOrderState(
   setStep(1);
   setSelectedPlate(null);
   setNote('');
+  setSelectedQuantity(1);
   setIsNotesModalVisible(false);
 }
 
@@ -238,6 +240,7 @@ export default function HomeScreen() {
   const [selectedPlate, setSelectedPlate] = useState<MenuItem | null>(null);
   const [isNotesModalVisible, setIsNotesModalVisible] = useState(false);
   const [note, setNote] = useState('');
+  const [selectedQuantity, setSelectedQuantity] = useState(1);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
   const [pendingItemsToAdd, setPendingItemsToAdd] = useState<OrderItem[]>([]);
@@ -539,6 +542,28 @@ export default function HomeScreen() {
     () => (currentOrder._id ? [...currentOrder.items, ...pendingItemsToAdd] : currentOrder.items),
     [currentOrder._id, currentOrder.items, pendingItemsToAdd],
   );
+  const groupedCombinedOrderItems = useMemo(() => {
+    const grouped = new Map<string, { item: OrderItem; quantity: number; firstIndex: number }>();
+
+    combinedOrderItems.forEach((item, index) => {
+      const note = item.note || 'Sin notas';
+      const key = `${item.name}::${note}::${item.price}`;
+      const existing = grouped.get(key);
+
+      if (existing) {
+        existing.quantity += 1;
+        return;
+      }
+
+      grouped.set(key, {
+        item,
+        quantity: 1,
+        firstIndex: index,
+      });
+    });
+
+    return Array.from(grouped.values());
+  }, [combinedOrderItems]);
   const displayedTotal = useMemo(
     () => (currentOrder._id ? currentOrder.total + pendingItemsTotal : currentOrder.total),
     [currentOrder._id, currentOrder.total, pendingItemsTotal],
@@ -713,6 +738,7 @@ export default function HomeScreen() {
     setSuccessMessage('');
     setSelectedPlate(item);
     setNote('');
+    setSelectedQuantity(1);
     setIsNotesModalVisible(true);
     setStep(3);
   };
@@ -723,31 +749,30 @@ export default function HomeScreen() {
     }
 
     const itemNote = note.trim() || 'Sin notas';
+    const quantity = Number.isFinite(selectedQuantity) ? Math.max(1, Math.trunc(selectedQuantity)) : 1;
+    const itemsBatch = Array.from({ length: quantity }, () => ({
+      name: selectedPlate.name,
+      price: selectedPlate.price,
+      note: itemNote,
+    }));
 
     if (currentOrder._id) {
       setPendingItemsToAdd((previous) => [
         ...previous,
-        {
-          name: selectedPlate.name,
-          price: selectedPlate.price,
-          note: itemNote,
-        },
+        ...itemsBatch,
       ]);
-      setSuccessMessage(`${selectedPlate.name} listo para actualizar el pedido.`);
+      setSuccessMessage(`${selectedPlate.name} x${quantity} listo para actualizar el pedido.`);
       setIsNotesModalVisible(false);
       setSelectedPlate(null);
       setNote('');
+      setSelectedQuantity(1);
       setStep(2);
       return;
     }
 
     const nextItems = [
       ...currentOrder.items,
-      {
-        name: selectedPlate.name,
-        price: selectedPlate.price,
-        note: itemNote,
-      },
+      ...itemsBatch,
     ];
 
     const total = nextItems.reduce((sum, item) => sum + item.price, 0);
@@ -763,10 +788,11 @@ export default function HomeScreen() {
     setIsNotesModalVisible(false);
     setSelectedPlate(null);
     setNote('');
+    setSelectedQuantity(1);
     setStep(2);
   };
 
-  const handleRemoveItem = (indexToRemove: number) => {
+  const handleRemoveItem = (indexToRemove: number, shouldConfirm = true) => {
     const itemToRemove = combinedOrderItems[indexToRemove];
     const baseItemsCount = currentOrder.items.length;
 
@@ -785,6 +811,46 @@ export default function HomeScreen() {
       return;
     }
 
+    const executeRemoval = async () => {
+      if (currentOrder._id && itemToRemove._id) {
+        try {
+          const response = await axios.patch<{ order: CurrentOrder }>(`${API_BASE_URL}/api/orders/${currentOrder._id}/update-items`, {
+            items: currentOrder.items.filter((item) => item._id !== itemToRemove._id),
+          },
+          );
+
+          setCurrentOrder(normalizeOrder(response.data.order));
+          setSuccessMessage(`${itemToRemove.name} fue eliminado de la orden.`);
+          return;
+        } catch (error) {
+          if (isAxiosError(error)) {
+            setErrorMessage(error.response?.data?.message || 'No se pudo eliminar el item.');
+            return;
+          }
+
+          setErrorMessage('No se pudo eliminar el item.');
+          return;
+        }
+      }
+
+      const nextItems = currentOrder.items.filter((_, index) => index !== indexToRemove);
+      const total = nextItems.reduce((sum, item) => sum + item.price, 0);
+
+      setCurrentOrder({
+        table: currentOrder.table,
+        cliente_nombre: currentOrder.cliente_nombre,
+        seccion: currentOrder.seccion,
+        items: nextItems,
+        total,
+        status: 'pendiente',
+      });
+    };
+
+    if (!shouldConfirm) {
+      void executeRemoval();
+      return;
+    }
+
     Alert.alert(
       'Eliminar producto',
       `Vas a eliminar ${itemToRemove.name} del pedido actual.`,
@@ -796,38 +862,8 @@ export default function HomeScreen() {
         {
           text: 'Eliminar',
           style: 'destructive',
-          onPress: async () => {
-            if (currentOrder._id && itemToRemove._id) {
-              try {
-                const response = await axios.patch<{ order: CurrentOrder }>(`${API_BASE_URL}/api/orders/${currentOrder._id}/update-items`, {
-                  items: currentOrder.items.filter((item) => item._id !== itemToRemove._id),
-                },
-                );
-
-                setCurrentOrder(normalizeOrder(response.data.order));
-                setSuccessMessage(`${itemToRemove.name} fue eliminado de la orden.`);
-              } catch (error) {
-                if (isAxiosError(error)) {
-                  setErrorMessage(error.response?.data?.message || 'No se pudo eliminar el item.');
-                  return;
-                }
-
-                setErrorMessage('No se pudo eliminar el item.');
-                return;
-              }
-            }
-
-            const nextItems = currentOrder.items.filter((_, index) => index !== indexToRemove);
-            const total = nextItems.reduce((sum, item) => sum + item.price, 0);
-
-            setCurrentOrder({
-              table: currentOrder.table,
-              cliente_nombre: currentOrder.cliente_nombre,
-              seccion: currentOrder.seccion,
-              items: nextItems,
-              total,
-              status: 'pendiente',
-            });
+          onPress: () => {
+            void executeRemoval();
           },
         },
       ],
@@ -838,7 +874,40 @@ export default function HomeScreen() {
     setIsNotesModalVisible(false);
     setSelectedPlate(null);
     setNote('');
+    setSelectedQuantity(1);
     setStep(2);
+  };
+
+  const handleAddFromGroup = (item: OrderItem) => {
+    if (!canAddItemsToOrder) {
+      return;
+    }
+
+    if (currentOrder._id) {
+      setPendingItemsToAdd((previous) => [
+        ...previous,
+        {
+          name: item.name,
+          price: item.price,
+          note: item.note,
+        },
+      ]);
+      setSuccessMessage(`${item.name} agregado para actualizar el pedido.`);
+      return;
+    }
+
+    const nextItems = [...currentOrder.items, { name: item.name, price: item.price, note: item.note }];
+    const total = nextItems.reduce((sum, candidate) => sum + candidate.price, 0);
+
+    setCurrentOrder({
+      table: currentOrder.table,
+      cliente_nombre: currentOrder.cliente_nombre,
+      seccion: currentOrder.seccion,
+      items: nextItems,
+      total,
+      status: 'pendiente',
+    });
+    setSuccessMessage(`${item.name} agregado al pedido.`);
   };
 
   const handleSubmitOrder = async () => {
@@ -879,6 +948,7 @@ export default function HomeScreen() {
           setStep,
           setSelectedPlate,
           setNote,
+          setSelectedQuantity,
           setIsNotesModalVisible,
         );
         Alert.alert('Pedido actualizado', successCopy);
@@ -897,6 +967,7 @@ export default function HomeScreen() {
         setStep,
         setSelectedPlate,
         setNote,
+        setSelectedQuantity,
         setIsNotesModalVisible,
       );
       Alert.alert('Pedido enviado', successCopy);
@@ -1122,22 +1193,29 @@ export default function HomeScreen() {
                 </Pressable>
               ) : null}
 
-              {combinedOrderItems.map((item, index) => (
-                <View key={`${item.name}-${index}`} style={styles.orderItemRow}>
+              {groupedCombinedOrderItems.map((group) => (
+                <View key={`${group.item.name}-${group.item.note}-${group.item.price}`} style={styles.orderItemRow}>
                   <View style={styles.orderItemCopy}>
                     <View style={styles.orderItemHeader}>
-                      <Text style={styles.orderItemName}>{item.name}</Text>
-                      {canRemoveItems ? (
+                      <Text style={styles.orderItemName}>{group.quantity} x {group.item.name}</Text>
+                      <View style={styles.itemQtyControls}>
                         <Pressable
-                          onPress={() => handleRemoveItem(index)}
-                          style={styles.removeItemButton}>
-                          <Text style={styles.removeItemButtonText}>Quitar</Text>
+                          onPress={() => handleRemoveItem(group.firstIndex, group.quantity === 1)}
+                          disabled={!canRemoveItems || group.quantity <= 0}
+                          style={[styles.qtyCircleButton, (!canRemoveItems || group.quantity <= 0) && styles.disabledAction]}>
+                          <Text style={styles.qtyCircleButtonText}>-</Text>
                         </Pressable>
-                      ) : null}
+                        <Pressable
+                          onPress={() => handleAddFromGroup(group.item)}
+                          disabled={!canAddItemsToOrder}
+                          style={[styles.qtyCircleButton, styles.qtyCircleButtonPlus, !canAddItemsToOrder && styles.disabledAction]}>
+                          <Text style={[styles.qtyCircleButtonText, styles.qtyCircleButtonTextPlus]}>+</Text>
+                        </Pressable>
+                      </View>
                     </View>
-                    <Text style={styles.orderItemNote}>{item.note}</Text>
+                    <Text style={styles.orderItemNote}>{group.item.note}</Text>
                   </View>
-                  <Text style={styles.orderItemPrice}>${item.price.toFixed(2)}</Text>
+                  <Text style={styles.orderItemPrice}>${(group.item.price * group.quantity).toFixed(2)}</Text>
                 </View>
               ))}
 
@@ -1271,6 +1349,23 @@ export default function HomeScreen() {
               Este paso agrega el item al pedido. El envio al backend sucede cuando pulsas Confirmar en Pedido actual.
             </Text>
 
+            <View style={styles.quantityRow}>
+              <Text style={styles.quantityLabel}>Cantidad</Text>
+              <View style={styles.quantityControls}>
+                <Pressable
+                  onPress={() => setSelectedQuantity((current) => Math.max(1, current - 1))}
+                  style={styles.quantityButton}>
+                  <Text style={styles.quantityButtonText}>-</Text>
+                </Pressable>
+                <Text style={styles.quantityValue}>{selectedQuantity}</Text>
+                <Pressable
+                  onPress={() => setSelectedQuantity((current) => current + 1)}
+                  style={[styles.quantityButton, styles.quantityButtonAccent]}>
+                  <Text style={[styles.quantityButtonText, styles.quantityButtonTextAccent]}>+</Text>
+                </Pressable>
+              </View>
+            </View>
+
             <View style={styles.quickNotesRow}>
               {quickNotesForSelectedItem.map((quickNote) => {
                 const selected = note === quickNote;
@@ -1302,7 +1397,7 @@ export default function HomeScreen() {
                 <Text style={styles.modalSecondaryText}>Cancelar</Text>
               </Pressable>
               <Pressable onPress={handleAddItem} style={styles.primaryAction}>
-                <Text style={styles.primaryActionText}>Agregar</Text>
+                <Text style={styles.primaryActionText}>Agregar x{selectedQuantity}</Text>
               </Pressable>
             </View>
           </View>
@@ -1688,6 +1783,34 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     textTransform: 'uppercase',
   },
+  itemQtyControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  qtyCircleButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#334155',
+    backgroundColor: '#0F172A',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qtyCircleButtonPlus: {
+    backgroundColor: brand.accent.primary,
+    borderColor: brand.accent.primary,
+  },
+  qtyCircleButtonText: {
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '800',
+    lineHeight: 20,
+  },
+  qtyCircleButtonTextPlus: {
+    color: '#000000',
+  },
   orderItemNote: {
     color: '#CBD5E1',
     fontSize: 13,
@@ -1782,6 +1905,58 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  quantityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderRadius: 12,
+    backgroundColor: '#0F172A',
+    borderWidth: 1,
+    borderColor: '#334155',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  quantityLabel: {
+    color: '#F8FAFC',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  quantityControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  quantityButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#334155',
+    backgroundColor: '#1E293B',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quantityButtonAccent: {
+    backgroundColor: brand.accent.primary,
+    borderColor: brand.accent.primary,
+  },
+  quantityButtonText: {
+    color: '#F8FAFC',
+    fontSize: 20,
+    fontWeight: '800',
+    lineHeight: 22,
+  },
+  quantityButtonTextAccent: {
+    color: '#000000',
+  },
+  quantityValue: {
+    minWidth: 28,
+    textAlign: 'center',
+    color: '#F8FAFC',
+    fontSize: 18,
+    fontWeight: '800',
   },
   quickNoteChip: {
     borderRadius: 12,

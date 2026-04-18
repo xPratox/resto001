@@ -64,6 +64,8 @@ const { API_BASE_URL, SOCKET_URL } = window.RESTO_CONFIG || {
 const AUTH_STORAGE_KEY = 'resto001:auth:caja';
 let authToken = '';
 let authUsuario = '';
+let authSubmitHandler = null;
+let pendingLoginResolver = null;
 
 let socketInstance = null;
 let socketListenersBound = false;
@@ -372,7 +374,71 @@ async function loginCajaUser(usuario, contrasena) {
   });
 }
 
+function bindCajaAuthForm() {
+  if (!authForm || !authUsuarioInput || !authContrasenaInput) {
+    return;
+  }
+
+  if (authSubmitHandler) {
+    return;
+  }
+
+  authSubmitHandler = async (event) => {
+    event.preventDefault();
+
+    const usuario = String(authUsuarioInput.value || '').trim();
+    const contrasena = String(authContrasenaInput.value || '').trim();
+
+    if (!usuario || !contrasena) {
+      showAuthError('Debes completar usuario y contrasena.');
+      return;
+    }
+
+    if (authSubmitButton) {
+      authSubmitButton.disabled = true;
+      authSubmitButton.textContent = 'Ingresando...';
+    }
+
+    showAuthError('');
+
+    try {
+      const data = await loginCajaUser(usuario, contrasena);
+
+      if (data?.rol !== 'caja') {
+        throw new Error('Este modulo solo permite usuarios con rol caja.');
+      }
+
+      authToken = data.token;
+      authUsuario = data.usuario || '';
+      storeCajaSession({
+        token: authToken,
+        rol: data.rol,
+        usuario: authUsuario,
+      });
+
+      setCajaAuthVisibility(true);
+      authContrasenaInput.value = '';
+      showLiveNotice(`Sesion iniciada: ${authUsuario}`, 'success');
+
+      if (pendingLoginResolver) {
+        pendingLoginResolver();
+        pendingLoginResolver = null;
+      }
+    } catch (error) {
+      showAuthError(error.message || 'Credenciales invalidas.');
+    } finally {
+      if (authSubmitButton) {
+        authSubmitButton.disabled = false;
+        authSubmitButton.textContent = 'Entrar';
+      }
+    }
+  };
+
+  authForm.addEventListener('submit', authSubmitHandler);
+}
+
 async function ensureCajaLogin() {
+  bindCajaAuthForm();
   const storedSession = loadStoredCajaSession();
 
   if (storedSession?.token && storedSession?.rol === 'caja') {
@@ -385,60 +451,7 @@ async function ensureCajaLogin() {
   setCajaAuthVisibility(false);
 
   await new Promise((resolve) => {
-    if (!authForm || !authUsuarioInput || !authContrasenaInput) {
-      resolve();
-      return;
-    }
-
-    const submitHandler = async (event) => {
-      event.preventDefault();
-
-      const usuario = String(authUsuarioInput.value || '').trim();
-      const contrasena = String(authContrasenaInput.value || '').trim();
-
-      if (!usuario || !contrasena) {
-        showAuthError('Debes completar usuario y contrasena.');
-        return;
-      }
-
-      if (authSubmitButton) {
-        authSubmitButton.disabled = true;
-        authSubmitButton.textContent = 'Ingresando...';
-      }
-
-      showAuthError('');
-
-      try {
-        const data = await loginCajaUser(usuario, contrasena);
-
-        if (data?.rol !== 'caja') {
-          throw new Error('Este modulo solo permite usuarios con rol caja.');
-        }
-
-        authToken = data.token;
-        authUsuario = data.usuario || '';
-        storeCajaSession({
-          token: authToken,
-          rol: data.rol,
-          usuario: authUsuario,
-        });
-
-        setCajaAuthVisibility(true);
-        authContrasenaInput.value = '';
-        showLiveNotice(`Sesion iniciada: ${authUsuario}`, 'success');
-        authForm.removeEventListener('submit', submitHandler);
-        resolve();
-      } catch (error) {
-        showAuthError(error.message || 'Credenciales invalidas.');
-      } finally {
-        if (authSubmitButton) {
-          authSubmitButton.disabled = false;
-          authSubmitButton.textContent = 'Entrar';
-        }
-      }
-    };
-
-    authForm.addEventListener('submit', submitHandler);
+    pendingLoginResolver = resolve;
   });
 }
 
@@ -886,6 +899,29 @@ function normalizePedido(order) {
   const montoPagado = Number(order.montoPagado || 0)
   const restante = Math.max(0, Number((total - montoPagado).toFixed(2)))
 
+  const groupedItems = new Map();
+
+  (order.items || []).forEach((item) => {
+    const nombre = item.name;
+    const precioUnitario = Number(item.price || 0);
+    const nota = item.note || 'Sin notas';
+    const cantidad = Number(item.cantidad || 1);
+    const key = `${nombre}::${nota}::${precioUnitario}`;
+    const existing = groupedItems.get(key);
+
+    if (existing) {
+      existing.cantidad += Number.isFinite(cantidad) && cantidad > 0 ? cantidad : 1;
+      return;
+    }
+
+    groupedItems.set(key, {
+      cantidad: Number.isFinite(cantidad) && cantidad > 0 ? cantidad : 1,
+      nombre,
+      precioUnitario,
+      nota,
+    });
+  });
+
   return {
     _id: order._id,
     mesa: order.table,
@@ -895,12 +931,7 @@ function normalizePedido(order) {
     restante,
     clienteNombre: order.cliente_nombre || '',
     mesoneroUsuario: order.mesonero_usuario || '',
-    items: (order.items || []).map((item) => ({
-      cantidad: 1,
-      nombre: item.name,
-      precioUnitario: Number(item.price || 0),
-      nota: item.note || 'Sin notas',
-    })),
+    items: Array.from(groupedItems.values()),
   };
 }
 

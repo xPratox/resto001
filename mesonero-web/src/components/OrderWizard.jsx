@@ -74,6 +74,14 @@ function groupItems(items) {
   return Array.from(grouped.values())
 }
 
+function buildItemsBatch(item, note, quantity) {
+  return Array.from({ length: quantity }, () => ({
+    name: item.name,
+    price: item.price,
+    note,
+  }))
+}
+
 async function parseJsonResponse(response) {
   const data = await response.json()
 
@@ -91,6 +99,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
   const [selectedCategory, setSelectedCategory] = useState('Bebidas')
   const [selectedMenuItem, setSelectedMenuItem] = useState(null)
   const [selectedNote, setSelectedNote] = useState('Sin hielo')
+  const [selectedQuantity, setSelectedQuantity] = useState(1)
   const [sending, setSending] = useState(false)
   const [feedback, setFeedback] = useState('')
   const [feedbackType, setFeedbackType] = useState('default')
@@ -113,6 +122,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
   const canRemoveItems = !currentOrder._id || currentOrder.status === 'pendiente'
   const canEditActiveOrder = currentOrder._id && !isOrderLocked(currentOrder.status)
   const groupedEditableItems = useMemo(() => groupItems(editableItems), [editableItems])
+  const groupedCurrentItems = useMemo(() => groupItems(currentOrder.items), [currentOrder.items])
   const totalInPesos = useMemo(() => {
     if (!Number.isFinite(Number(dailyExchangeRate)) || Number(dailyExchangeRate) <= 0) {
       return null
@@ -285,26 +295,12 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
     setStep(2)
   }
 
-  function addMenuItem(item, note = 'Sin cambios') {
-    const nextItems = [
-      ...currentOrder.items,
-      {
-        name: item.name,
-        price: item.price,
-        note,
-      },
-    ]
-
-    updateOrder(nextItems)
-    setFeedbackType('default')
-    setFeedback(`${item.name} agregado a ${currentOrder.table}`)
-  }
-
   function handleMenuSelection(item) {
     setFeedback('')
     setFeedbackType('default')
     setSelectedMenuItem(item)
     setSelectedNote(quickNotesByCategory[item.category][0])
+    setSelectedQuantity(1)
     setStep(3)
   }
 
@@ -312,6 +308,10 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
     if (!selectedMenuItem) {
       return
     }
+
+    const normalizedQuantity = Number.parseInt(selectedQuantity, 10)
+    const quantity = Number.isFinite(normalizedQuantity) ? Math.max(1, normalizedQuantity) : 1
+    const itemsBatch = buildItemsBatch(selectedMenuItem, selectedNote, quantity)
 
     if (currentOrder._id) {
       try {
@@ -323,11 +323,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
           body: JSON.stringify({
             items: [
               ...currentOrder.items,
-              {
-                name: selectedMenuItem.name,
-                price: selectedMenuItem.price,
-                note: selectedNote,
-              },
+              ...itemsBatch,
             ],
           }),
         })
@@ -335,9 +331,10 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
         const data = await parseJsonResponse(response)
         setCurrentOrder(normalizeOrder(data.order))
         setFeedbackType('default')
-        setFeedback(`${selectedMenuItem.name} agregado a la orden activa.`)
+        setFeedback(`${selectedMenuItem.name} x${quantity} agregado a la orden activa.`)
         setSelectedMenuItem(null)
         setSelectedNote('Sin hielo')
+        setSelectedQuantity(1)
         setStep(2)
         return
       } catch (error) {
@@ -346,9 +343,13 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
       }
     }
 
-    addMenuItem(selectedMenuItem, selectedNote)
+    const nextItems = [...currentOrder.items, ...itemsBatch]
+    updateOrder(nextItems)
+    setFeedbackType('default')
+    setFeedback(`${selectedMenuItem.name} x${quantity} agregado a ${currentOrder.table}`)
     setSelectedMenuItem(null)
     setSelectedNote('Sin hielo')
+    setSelectedQuantity(1)
     setStep(2)
   }
 
@@ -401,6 +402,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
     setStep(1)
     setSelectedMenuItem(null)
     setSelectedNote('Sin hielo')
+    setSelectedQuantity(1)
     setSelectedCategory('Bebidas')
     setEditableItems([])
     setIsDirty(false)
@@ -494,6 +496,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
     setIsDirty(false)
     setSelectedMenuItem(null)
     setSelectedNote('Sin hielo')
+    setSelectedQuantity(1)
     setSelectedCategory('Bebidas')
 
     try {
@@ -736,6 +739,43 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
               </div>
 
               <div className="rounded-[24px] border border-carbonLine bg-carbon p-4">
+                <p className="text-sm font-semibold uppercase tracking-[0.25em] text-slate-300">
+                  Cantidad
+                </p>
+
+                <div className="mt-3 inline-flex items-center gap-3 rounded-2xl border border-carbonLine bg-[#0b1220] p-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedQuantity((current) => Math.max(1, Number(current || 1) - 1))}
+                    className="flex h-10 w-10 items-center justify-center rounded-xl border border-carbonLine bg-carbon text-lg font-bold text-snowText"
+                    aria-label="Disminuir cantidad"
+                  >
+                    -
+                  </button>
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={selectedQuantity}
+                    onChange={(event) => {
+                      const nextValue = Number.parseInt(event.target.value, 10)
+                      setSelectedQuantity(Number.isFinite(nextValue) ? Math.max(1, nextValue) : 1)
+                    }}
+                    className="h-10 w-20 rounded-xl border border-carbonLine bg-carbon px-3 text-center font-semibold text-snowText outline-none"
+                    aria-label="Cantidad de producto"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setSelectedQuantity((current) => Number(current || 1) + 1)}
+                    className="flex h-10 w-10 items-center justify-center rounded-xl border border-carbonLine bg-sunset text-lg font-bold text-black"
+                    aria-label="Aumentar cantidad"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-[24px] border border-carbonLine bg-carbon p-4">
                 <label
                   htmlFor="order-note"
                   className="text-sm font-semibold uppercase tracking-[0.25em] text-slate-300"
@@ -765,7 +805,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
                   onClick={handleAddCustomizedItem}
                   className="min-h-[52px] rounded-2xl bg-sunset px-5 font-semibold text-black transition hover:brightness-110"
                 >
-                  Agregar al pedido
+                  Agregar x{selectedQuantity} al pedido
                 </button>
               </div>
             </div>
@@ -894,6 +934,16 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
                               return
                             }
 
+                            if (group.quantity === 1) {
+                              const shouldDelete = window.confirm(
+                                `Vas a eliminar ${group.name} del pedido. ¿Continuar?`,
+                              )
+
+                              if (!shouldDelete) {
+                                return
+                              }
+                            }
+
                             const targetId = group.items[group.items.length - 1]?._id
                             const nextItems = targetId
                               ? editableItems.filter((item) => item._id !== targetId)
@@ -954,28 +1004,80 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
               Aun no hay items en la orden. Selecciona mesa y empieza desde el menu.
             </div>
           ) : (
-            currentOrder.items.map((item, index) => (
+            groupedCurrentItems.map((group) => (
               <div
-                key={`${item.name}-${index}`}
+                key={group.key}
                 className="rounded-3xl border border-carbonLine bg-carbon p-4"
               >
                 <div className="flex items-start justify-between gap-4">
                   <div>
-                    <p className="text-lg font-semibold text-snowText">{item.name}</p>
-                    <p className="mt-1 text-sm text-slate-300">{item.note}</p>
+                    <p className="text-lg font-semibold text-snowText">{group.quantity} x {group.name}</p>
+                    <p className="mt-1 text-sm text-slate-300">{group.note}</p>
                   </div>
-                  {canRemoveItems ? (
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveItem(index)}
-                      className="rounded-xl border border-carbonLine px-3 py-2 text-xs font-semibold uppercase tracking-[0.25em] text-slate-200 transition hover:bg-carbonCard"
-                    >
-                      Quitar
-                    </button>
+                  {!currentOrder._id ? (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const indexToRemove = currentOrder.items.findIndex(
+                            (candidate) =>
+                              candidate.name === group.name &&
+                              candidate.note === group.note &&
+                              candidate.price === group.price,
+                          )
+
+                          if (indexToRemove < 0) {
+                            return
+                          }
+
+                          if (group.quantity === 1) {
+                            const shouldDelete = window.confirm(
+                              `Vas a eliminar ${group.name} del pedido. ¿Continuar?`,
+                            )
+
+                            if (!shouldDelete) {
+                              return
+                            }
+                          }
+
+                          const nextItems = currentOrder.items.filter((_, index) => index !== indexToRemove)
+                          updateOrder(nextItems)
+                          setFeedbackType('default')
+                          setFeedback(
+                            group.quantity === 1
+                              ? `${group.name} fue eliminado del pedido.`
+                              : `${group.name} reducido en 1 unidad.`,
+                          )
+                        }}
+                        disabled={!canRemoveItems || group.quantity <= 0}
+                        className="flex h-9 w-9 items-center justify-center rounded-xl border border-carbonLine bg-carbon text-lg font-bold text-snowText disabled:cursor-not-allowed disabled:text-slate-500"
+                      >
+                        -
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          updateOrder([
+                            ...currentOrder.items,
+                            {
+                              name: group.name,
+                              note: group.note,
+                              price: group.price,
+                            },
+                          ])
+                          setFeedbackType('default')
+                          setFeedback(`${group.name} agregado a ${currentOrder.table}`)
+                        }}
+                        disabled={isOrderLocked(currentOrder.status)}
+                        className="flex h-9 w-9 items-center justify-center rounded-xl border border-carbonLine bg-sunset text-lg font-bold text-black disabled:cursor-not-allowed disabled:bg-carbonLine disabled:text-slate-500"
+                      >
+                        +
+                      </button>
+                    </div>
                   ) : null}
                 </div>
                 <p className="mt-3 text-right text-sm font-semibold text-sunset">
-                  {formatPrice(item.price)}
+                  {formatPrice(group.price * group.quantity)}
                 </p>
               </div>
             ))

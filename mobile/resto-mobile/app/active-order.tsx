@@ -136,11 +136,34 @@ export default function ActiveOrderScreen() {
   const [isCustomizationVisible, setIsCustomizationVisible] = useState(false);
   const [selectedMenuItem, setSelectedMenuItem] = useState<MenuItem | null>(null);
   const [customizationNote, setCustomizationNote] = useState('');
+  const [selectedQuantity, setSelectedQuantity] = useState(1);
   const [hasLocalEdits, setHasLocalEdits] = useState(false);
   const hasLocalEditsRef = useRef(false);
 
   const liveTotal = useMemo(() => {
     return tempOrderItems.reduce((sum, item) => sum + Number(item.price || 0), 0);
+  }, [tempOrderItems]);
+  const groupedTempOrderItems = useMemo(() => {
+    const grouped = new Map<string, { item: OrderItem; quantity: number; firstIndex: number }>();
+
+    tempOrderItems.forEach((item, index) => {
+      const note = getItemNote(item);
+      const key = `${item.name}::${note}::${item.price}`;
+      const existing = grouped.get(key);
+
+      if (existing) {
+        existing.quantity += 1;
+        return;
+      }
+
+      grouped.set(key, {
+        item,
+        quantity: 1,
+        firstIndex: index,
+      });
+    });
+
+    return Array.from(grouped.values());
   }, [tempOrderItems]);
 
   const canEditOrder = order?.status !== 'pagado' && order?.status !== 'limpieza';
@@ -213,8 +236,19 @@ export default function ActiveOrderScreen() {
     void fetchOrder();
   }, [fetchOrder]);
 
-  const handleRemoveItem = (itemToRemove: OrderItem, itemIndex: number) => {
+  const handleRemoveItem = (itemToRemove: OrderItem, itemIndex: number, shouldConfirm = true) => {
     if (!order || !canEditOrder) {
+      return;
+    }
+
+    const removeAction = () => {
+      setTempOrderItems((current) => current.filter((_, index) => index !== itemIndex));
+      setEditingState(true);
+      setSuccessMessage(`${itemToRemove.name} fue quitado localmente. Confirma cambios para sincronizar.`);
+    };
+
+    if (!shouldConfirm) {
+      removeAction();
       return;
     }
 
@@ -226,11 +260,7 @@ export default function ActiveOrderScreen() {
         {
           text: 'Eliminar',
           style: 'destructive',
-          onPress: () => {
-            setTempOrderItems((current) => current.filter((_, index) => index !== itemIndex));
-            setEditingState(true);
-            setSuccessMessage(`${itemToRemove.name} fue quitado localmente. Confirma cambios para sincronizar.`);
-          },
+          onPress: removeAction,
         },
       ],
     );
@@ -253,6 +283,7 @@ export default function ActiveOrderScreen() {
 
     setSelectedMenuItem(menuItem);
     setCustomizationNote('');
+    setSelectedQuantity(1);
     setIsCustomizationVisible(true);
   };
 
@@ -262,21 +293,24 @@ export default function ActiveOrderScreen() {
     }
 
     const normalizedNote = customizationNote.trim() || 'Sin notas';
+    const quantity = Number.isFinite(selectedQuantity) ? Math.max(1, Math.trunc(selectedQuantity)) : 1;
+    const itemsBatch = Array.from({ length: quantity }, () => ({
+      name: selectedMenuItem.name,
+      price: selectedMenuItem.price,
+      note: normalizedNote,
+      notas: normalizedNote,
+    }));
 
     setTempOrderItems((current) => [
       ...current,
-      {
-        name: selectedMenuItem.name,
-        price: selectedMenuItem.price,
-        note: normalizedNote,
-        notas: normalizedNote,
-      },
+      ...itemsBatch,
     ]);
     setEditingState(true);
 
-    setSuccessMessage(`${selectedMenuItem.name} agregado al pedido en edición.`);
+    setSuccessMessage(`${selectedMenuItem.name} x${quantity} agregado al pedido en edición.`);
     setIsCustomizationVisible(false);
     setCustomizationNote('');
+    setSelectedQuantity(1);
     setSelectedMenuItem(null);
     setIsMenuVisible(false);
   };
@@ -447,21 +481,52 @@ export default function ActiveOrderScreen() {
     );
   };
 
-  const renderOrderItem = ({ item, index }: { item: OrderItem; index: number }) => {
+  const handleAddFromGroup = (item: OrderItem) => {
+    if (!canEditOrder) {
+      return;
+    }
+
+    const note = getItemNote(item);
+
+    setTempOrderItems((current) => [
+      ...current,
+      {
+        name: item.name,
+        price: item.price,
+        note,
+        notas: note,
+      },
+    ]);
+    setEditingState(true);
+    setSuccessMessage(`${item.name} agregado al pedido en edición.`);
+  };
+
+  const renderOrderItem = ({ item, quantity, index }: { item: OrderItem; quantity: number; index: number }) => {
+    const note = getItemNote(item);
+
     return (
       <View style={styles.orderRow}>
         <View style={styles.itemCopy}>
-          <Text style={styles.itemName}>{item.name}</Text>
-          <Text style={styles.itemNote}>{getItemNote(item)}</Text>
+          <Text style={styles.itemName}>{quantity} x {item.name}</Text>
+          <Text style={styles.itemNote}>{note}</Text>
         </View>
 
         <View style={styles.rowActions}>
-          <Text style={styles.itemPrice}>${item.price.toFixed(2)}</Text>
-          {canEditOrder ? (
-            <Pressable onPress={() => handleRemoveItem(item, index)} style={styles.removeButton}>
-              <Ionicons name="trash-outline" size={20} color={brand.status.error} />
+          <Text style={styles.itemPrice}>${(item.price * quantity).toFixed(2)}</Text>
+          <View style={styles.itemQtyControls}>
+            <Pressable
+              onPress={() => handleRemoveItem(item, index, quantity === 1)}
+              disabled={!canEditOrder || quantity <= 0}
+              style={[styles.qtyCircleButton, (!canEditOrder || quantity <= 0) && styles.disabledButton]}>
+              <Text style={styles.qtyCircleButtonText}>-</Text>
             </Pressable>
-          ) : null}
+            <Pressable
+              onPress={() => handleAddFromGroup(item)}
+              disabled={!canEditOrder}
+              style={[styles.qtyCircleButton, styles.qtyCircleButtonPlus, !canEditOrder && styles.disabledButton]}>
+              <Text style={[styles.qtyCircleButtonText, styles.qtyCircleButtonTextPlus]}>+</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
     );
@@ -515,10 +580,10 @@ export default function ActiveOrderScreen() {
               <View style={styles.cardDivider} />
 
               <View style={styles.orderItemsList}>
-                {tempOrderItems.length > 0 ? (
-                  tempOrderItems.map((item, index) => (
-                    <View key={`${item._id || item.name}-${item.note}-${index}`}>
-                      {renderOrderItem({ item, index })}
+                {groupedTempOrderItems.length > 0 ? (
+                  groupedTempOrderItems.map((group) => (
+                    <View key={`${group.item._id || group.item.name}-${getItemNote(group.item)}-${group.item.price}`}>
+                      {renderOrderItem({ item: group.item, quantity: group.quantity, index: group.firstIndex })}
                     </View>
                   ))
                 ) : (
@@ -612,6 +677,7 @@ export default function ActiveOrderScreen() {
           setIsCustomizationVisible(false);
           setSelectedMenuItem(null);
           setCustomizationNote('');
+          setSelectedQuantity(1);
         }}>
         <View style={styles.modalBackdrop}>
           <Pressable
@@ -620,11 +686,31 @@ export default function ActiveOrderScreen() {
               setIsCustomizationVisible(false);
               setSelectedMenuItem(null);
               setCustomizationNote('');
+              setSelectedQuantity(1);
             }}
           />
           <View style={styles.customizationCard}>
             <Text style={styles.catalogTitle}>{selectedMenuItem?.name || 'Personalizar producto'}</Text>
             <Text style={styles.catalogSubtitle}>Agrega observaciones para este producto antes de sumarlo al pedido.</Text>
+
+            <View style={styles.quantitySelectorRow}>
+              <Text style={styles.quantityLabel}>Cantidad</Text>
+              <View style={styles.quantityControls}>
+                <Pressable
+                  onPress={() => setSelectedQuantity((current) => Math.max(1, current - 1))}
+                  style={styles.quantityButton}
+                  accessibilityLabel="Disminuir cantidad">
+                  <Text style={styles.quantityButtonText}>-</Text>
+                </Pressable>
+                <Text style={styles.quantityValue}>{selectedQuantity}</Text>
+                <Pressable
+                  onPress={() => setSelectedQuantity((current) => current + 1)}
+                  style={[styles.quantityButton, styles.quantityButtonAccent]}
+                  accessibilityLabel="Aumentar cantidad">
+                  <Text style={[styles.quantityButtonText, styles.quantityButtonTextAccent]}>+</Text>
+                </Pressable>
+              </View>
+            </View>
 
             <TextInput
               value={customizationNote}
@@ -647,7 +733,7 @@ export default function ActiveOrderScreen() {
             </View>
 
             <Pressable onPress={handleAddCustomizedItem} style={styles.customizationActionButton}>
-              <Text style={styles.customizationActionText}>Añadir al pedido</Text>
+              <Text style={styles.customizationActionText}>Añadir x{selectedQuantity} al pedido</Text>
             </Pressable>
           </View>
         </View>
@@ -812,6 +898,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  itemQtyControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  qtyCircleButton: {
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: brand.surface.card,
+    backgroundColor: brand.background.deepCarbon,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qtyCircleButtonPlus: {
+    backgroundColor: brand.accent.primary,
+    borderColor: brand.accent.primary,
+  },
+  qtyCircleButtonText: {
+    color: brand.text.primary,
+    fontSize: 18,
+    fontWeight: '800',
+    lineHeight: 20,
+  },
+  qtyCircleButtonTextPlus: {
+    color: brand.text.onAccent,
+  },
   totalRow: {
     paddingHorizontal: 18,
     paddingVertical: 18,
@@ -974,6 +1088,58 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 10,
+  },
+  quantitySelectorRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    borderWidth: 1,
+    borderColor: brand.surface.card,
+    backgroundColor: brand.background.deepCarbon,
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  quantityLabel: {
+    color: brand.text.primary,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  quantityControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  quantityButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: brand.surface.card,
+    backgroundColor: brand.surface.card,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quantityButtonAccent: {
+    backgroundColor: brand.accent.primary,
+    borderColor: brand.accent.primary,
+  },
+  quantityButtonText: {
+    color: brand.text.primary,
+    fontSize: 20,
+    fontWeight: '800',
+    lineHeight: 22,
+  },
+  quantityButtonTextAccent: {
+    color: brand.text.onAccent,
+  },
+  quantityValue: {
+    minWidth: 28,
+    textAlign: 'center',
+    color: brand.text.primary,
+    fontSize: 18,
+    fontWeight: '800',
   },
   quickNoteButton: {
     borderRadius: 999,
