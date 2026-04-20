@@ -618,13 +618,6 @@ export default function ActiveOrderScreen() {
             </Pressable>
 
             <Pressable
-              onPress={handlePayment}
-              disabled={!order || !tempOrderItems.length || isUpdating}
-              style={[styles.payButton, (!order || !tempOrderItems.length || isUpdating) && styles.disabledButton]}>
-              <Text style={styles.payButtonText}>{isUpdating ? 'Procesando...' : 'Cobrar y Enviar a Limpieza'}</Text>
-            </Pressable>
-
-            <Pressable
               onPress={handleCancelOrder}
               disabled={!order || !canEditOrder || isUpdating}
               style={[styles.cancelButton, (!order || !canEditOrder || isUpdating) && styles.disabledButton]}>

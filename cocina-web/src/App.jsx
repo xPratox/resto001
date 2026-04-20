@@ -102,7 +102,7 @@ export default function App() {
         <section className="w-full max-w-md rounded-3xl border border-cyan-500/30 bg-slate-900/90 p-6 shadow-2xl">
           <p className="text-xs font-semibold uppercase tracking-[0.32em] text-cyan-300/80">Resto 001</p>
           <h1 className="mt-2 text-3xl font-bold text-white">Login cocina</h1>
-          <p className="mt-2 text-sm text-slate-300">Inicia sesion para ver la cola de cocina.</p>
+          <p className="mt-2 text-sm text-slate-300">Inicia sesion para ver el historial de comandas de cocina.</p>
 
           <form className="mt-5 space-y-3" onSubmit={handleLogin}>
             <label className="block">

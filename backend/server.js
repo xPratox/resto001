@@ -1487,6 +1487,30 @@ app.get('/api/kitchen/orders', authorizeRoles('cocina'), async (_req, res) => {
 	}
 });
 
+app.get('/api/kitchen/history', authorizeRoles('cocina'), async (_req, res) => {
+	try {
+		const orders = await Order.find({
+			status: { $in: [ORDER_STATUS.KITCHEN, ORDER_STATUS.DELIVERED, ORDER_STATUS.CLEANING, ORDER_STATUS.PAID] },
+		})
+			.sort({ createdAt: -1 })
+			.limit(200)
+			.lean();
+
+		return res.json({
+			ok: true,
+			orders: orders
+				.map((order) => sanitizeKitchenOrder(order))
+				.filter(Boolean),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: 'No se pudo cargar el historial de comandas.',
+			error: error.message,
+		});
+	}
+});
+
 app.patch('/api/kitchen/orders/:id/ready', authorizeRoles('cocina'), async (req, res) => {
 	try {
 		const order = await Order.findById(req.params.id);

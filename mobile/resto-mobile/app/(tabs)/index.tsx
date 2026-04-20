@@ -431,7 +431,7 @@ export default function HomeScreen() {
 
     const intervalId = setInterval(() => {
       void fetchTableStatuses(false);
-    }, 4000);
+    }, 15000);
 
     return () => {
       clearInterval(intervalId);

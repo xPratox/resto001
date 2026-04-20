@@ -16,6 +16,7 @@ const tasaPesosEditor = document.getElementById('tasaPesosEditor');
 const tasaPesosStatus = document.getElementById('tasaPesosStatus');
 const conversionHint = document.getElementById('conversionHint');
 const paymentWarning = document.getElementById('paymentWarning');
+const imprimirComandaOption = document.getElementById('imprimirComandaOption');
 const paymentSubmitButton = pagoForm?.querySelector('button[type="submit"]');
 const pedidosList = document.getElementById('pedidosList');
 const reporteList = document.getElementById('reporteList');
@@ -1168,6 +1169,122 @@ function formatPesos(amount) {
   return `COP ${Number(amount || 0).toFixed(2)}`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function printComanda({ order, mesa, metodo, montoRecibidoUsd }) {
+  if (!order) {
+    return;
+  }
+
+  const printableItems = Array.isArray(order.items) && order.items.length
+    ? order.items
+        .map((item) => {
+          const cantidad = Number(item?.cantidad || 1);
+          const nombre = escapeHtml(item?.name || item?.nombre || 'Item');
+          const notaCruda = String(item?.note || item?.notas || '').trim();
+          const nota = notaCruda && notaCruda.toLowerCase() !== 'sin notas' ? escapeHtml(notaCruda) : '';
+
+          return `
+            <tr>
+              <td>${cantidad}</td>
+              <td>
+                <div>${nombre}</div>
+                ${nota ? `<div class="item-note">${nota}</div>` : ''}
+              </td>
+            </tr>
+          `;
+        })
+        .join('')
+    : '<tr><td colspan="2">Sin items</td></tr>';
+
+  const printWindow = window.open('', '_blank', 'width=900,height=700');
+
+  if (!printWindow) {
+    alert('No se pudo abrir la ventana de impresion. Verifica bloqueador de ventanas emergentes.');
+    return;
+  }
+
+  const mesaLabel = escapeHtml(mesa || order.table || '--');
+  const orderIdLabel = escapeHtml(String(order._id || '--').slice(-6));
+  const metodoLabel = escapeHtml(String(metodo || 'efectivo').toUpperCase());
+  const printedAt = new Intl.DateTimeFormat('es-VE', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date());
+
+  const html = `
+    <!doctype html>
+    <html lang="es">
+      <head>
+        <meta charset="utf-8" />
+        <title>Comanda ${orderIdLabel}</title>
+        <style>
+          @page { size: auto; margin: 8mm; }
+          body { font-family: Arial, sans-serif; color: #111827; margin: 0 auto; width: 290px; font-size: 12px; }
+          h1 { margin: 0 0 6px; font-size: 18px; }
+          .meta { margin: 0 0 4px; }
+          .meta strong { font-weight: 700; }
+          .divider { border-top: 1px dashed #94a3b8; margin: 8px 0; }
+          table { width: 100%; border-collapse: collapse; }
+          th, td { padding: 4px 0; text-align: left; vertical-align: top; }
+          th { font-size: 11px; border-bottom: 1px solid #d1d5db; }
+          td:first-child, th:first-child { width: 38px; }
+          .item-note { color: #6b7280; font-size: 11px; margin-top: 2px; }
+          .totals { margin-top: 8px; font-size: 12px; }
+          .totals p { margin: 2px 0; }
+          .totals .final { font-size: 14px; font-weight: 700; }
+        </style>
+      </head>
+      <body>
+        <h1>Comanda</h1>
+        <p class="meta"><strong>Fecha:</strong> ${escapeHtml(printedAt)}</p>
+        <p class="meta"><strong>Mesa:</strong> ${mesaLabel} | <strong>ID:</strong> ${orderIdLabel}</p>
+        <p class="meta"><strong>Pago:</strong> ${metodoLabel}</p>
+
+        <div class="divider"></div>
+
+        <table>
+          <thead>
+            <tr>
+              <th>Cant.</th>
+              <th>Item</th>
+            </tr>
+          </thead>
+          <tbody>${printableItems}</tbody>
+        </table>
+
+        <div class="divider"></div>
+
+        <div class="totals">
+          <p><strong>Abono:</strong> ${formatMoney(montoRecibidoUsd)}</p>
+          <p class="final"><strong>Total:</strong> ${formatMoney(order.total)}</p>
+        </div>
+
+        <script>
+          window.addEventListener('load', () => {
+            window.print();
+            window.setTimeout(() => window.close(), 120);
+          });
+        </script>
+      </body>
+    </html>
+  `;
+
+  printWindow.document.open();
+  printWindow.document.write(html);
+  printWindow.document.close();
+}
+
 function parseDecimalInput(value) {
   const normalized = String(value ?? '').replace(',', '.').trim();
   const parsed = parseFloat(normalized);
@@ -1700,6 +1817,8 @@ async function payOrderByMesa(mesa, paymentData) {
       ...paymentData,
     }),
   });
+
+  return order;
 }
 
 async function ensureSocket() {
@@ -1843,8 +1962,17 @@ pagoForm.addEventListener('submit', async (event) => {
     const mesa = mesaPagoSelect?.value?.trim();
     const metodo = metodoPagoSelect?.value || 'efectivo';
     const estado = estadoPagoSelect?.value || 'completado';
+    const shouldPrintComanda = Boolean(imprimirComandaOption?.checked);
     const paymentState = getPaymentValidationState();
-    const { pendingAmount, enteredAmountUsd: montoRecibido, isAmountInvalid, exceedsPending, missingRateForCurrency } = paymentState;
+    const {
+      pendingAmount,
+      selectedCurrency,
+      rawValue,
+      enteredAmountUsd: montoRecibido,
+      isAmountInvalid,
+      exceedsPending,
+      missingRateForCurrency,
+    } = paymentState;
 
     if (!mesa) {
       throw new Error('Debes usar el boton Seleccionar en la tarjeta del pedido para cobrar.');
@@ -1862,11 +1990,20 @@ pagoForm.addEventListener('submit', async (event) => {
       throw new Error('El monto excede el saldo pendiente');
     }
 
-    await payOrderByMesa(mesa, {
+    const paidOrderSnapshot = await payOrderByMesa(mesa, {
       metodo,
       estado,
       montoRecibido,
     });
+
+    if (shouldPrintComanda) {
+      printComanda({
+        order: paidOrderSnapshot,
+        mesa,
+        metodo,
+        montoRecibidoUsd: montoRecibido,
+      });
+    }
 
     setStatus('Pago registrado en backend central', { mesa });
     paymentAmountDraft = '';

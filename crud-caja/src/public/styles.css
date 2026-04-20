@@ -1038,6 +1038,25 @@ button.secondary {
   font-size: var(--text-base);
   font-weight: 700;
 }
+
+.payment-print-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 0;
+  color: var(--resto-text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.payment-print-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--resto-accent);
+}
+
 .pedido-item-note {
   color: var(--text-metallic-muted);
   font-size: 12px;

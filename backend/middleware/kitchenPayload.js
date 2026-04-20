@@ -47,6 +47,12 @@ function sanitizeKitchenOrder(order) {
 	return {
 		idPedido: String(order._id),
 		numeroMesa: String(order.table),
+		status: String(order.status || 'en_cocina').trim().toLowerCase(),
+		clienteNombre: String(order.cliente_nombre || '').trim(),
+		mesoneroUsuario: String(order.mesonero_usuario || '').trim(),
+		createdAt: order.createdAt || null,
+		preparedAt: order.preparedAt || null,
+		hora_pago: order.hora_pago || null,
 		items,
 		notas,
 	};

@@ -169,7 +169,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
     const intervalId = window.setInterval(() => {
       fetchTableStatuses(false)
       fetchDailyExchangeRate()
-    }, 4000)
+    }, 15000)
 
     return () => {
       window.clearInterval(intervalId)
@@ -211,7 +211,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
       return undefined
     }
 
-    const intervalId = window.setInterval(syncCurrentOrder, 4000)
+    const intervalId = window.setInterval(syncCurrentOrder, 15000)
 
     return () => {
       window.clearInterval(intervalId)
