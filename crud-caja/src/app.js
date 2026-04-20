@@ -7,7 +7,9 @@ const routes = require('./routes');
 const app = express();
 const reactBuildPath = path.join(__dirname, '..', 'web', 'dist');
 const legacyPublicPath = path.join(__dirname, 'public');
-const staticRoot = fs.existsSync(reactBuildPath) ? reactBuildPath : legacyPublicPath;
+const shouldUseReactBuild = process.env.CAJA_USE_REACT_BUILD === 'true';
+const hasReactBuild = fs.existsSync(path.join(reactBuildPath, 'index.html'));
+const staticRoot = shouldUseReactBuild && hasReactBuild ? reactBuildPath : legacyPublicPath;
 
 app.get('/config.js', (req, res) => {
   const browserProtocol = req.protocol || 'http';
@@ -35,7 +37,7 @@ app.get('/health', (_req, res) => {
 
 app.use('/api', routes);
 
-if (fs.existsSync(path.join(reactBuildPath, 'index.html'))) {
+if (shouldUseReactBuild && hasReactBuild) {
   app.get(/^(?!\/api|\/health|\/config\.js).*/, (_req, res) => {
     res.sendFile(path.join(reactBuildPath, 'index.html'));
   });

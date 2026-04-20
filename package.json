@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "start": "npm run dev",
+    "start:all:tunnels": "powershell -ExecutionPolicy Bypass -File ./scripts/start-all-tunnels.ps1",
     "dev:backend": "npm --prefix backend run dev",
     "dev:caja": "npm --prefix crud-caja run start",
     "dev:cocina": "npm --prefix cocina-web run dev",
