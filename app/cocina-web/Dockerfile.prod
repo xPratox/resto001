@@ -1,0 +1,19 @@
+FROM node:22-bookworm-slim AS build
+
+WORKDIR /app/cocina-web
+
+COPY package.json /app/package.json
+COPY app/cocina-web/package*.json ./
+
+RUN npm install
+
+COPY app/cocina-web ./
+
+RUN npm run build
+
+FROM nginx:1.27-alpine
+
+COPY app/cocina-web/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/cocina-web/dist /usr/share/nginx/html
+
+EXPOSE 80

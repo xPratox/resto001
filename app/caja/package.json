@@ -1,0 +1,12 @@
+{
+  "name": "resto-caja",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Wrapper del modulo Caja React/Vite",
+  "scripts": {
+    "dev": "npm --prefix ./web run dev",
+    "start": "npm --prefix ./web run dev",
+    "build": "npm --prefix ./web run build",
+    "preview": "npm --prefix ./web run preview"
+  }
+}

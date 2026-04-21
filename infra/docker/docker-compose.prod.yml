@@ -1,0 +1,139 @@
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    env_file:
+      - ../../.env.docker.prod
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - resto001-network
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: services/backend/Dockerfile.prod
+    restart: unless-stopped
+    env_file:
+      - ../../.env.docker.prod
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - resto001-network
+
+  admin-web:
+    build:
+      context: ../..
+      dockerfile: app/admin-web/Dockerfile.prod
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - resto001-network
+
+  mesonero-web:
+    build:
+      context: ../..
+      dockerfile: app/mesonero-web/Dockerfile.prod
+    restart: unless-stopped
+    ports:
+      - "8082:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - resto001-network
+
+  mesonero-mobile:
+    build:
+      context: ../..
+      dockerfile: app/mobile/resto-mobile/Dockerfile.prod
+    restart: unless-stopped
+    ports:
+      - "8085:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - resto001-network
+
+  caja:
+    build:
+      context: ../..
+      dockerfile: app/caja/web/Dockerfile.prod
+    restart: unless-stopped
+    ports:
+      - "8083:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - resto001-network
+
+  cocina-web:
+    build:
+      context: ../..
+      dockerfile: app/cocina-web/Dockerfile.prod
+    restart: unless-stopped
+    ports:
+      - "8084:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - resto001-network
+
+networks:
+  resto001-network:
+    driver: bridge
+
+volumes:
+  mongo_data:

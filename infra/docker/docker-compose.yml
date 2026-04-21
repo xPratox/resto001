@@ -1,0 +1,188 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: resto001-mongo
+    restart: unless-stopped
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - resto001-network
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: services/backend/Dockerfile
+    container_name: resto001-backend
+    restart: unless-stopped
+    env_file:
+      - ../../.env.docker
+    volumes:
+      - ../../services/backend:/app/backend
+      - ../../package.json:/app/package.json:ro
+      - backend_node_modules:/app/backend/node_modules
+    ports:
+      - "${BACKEND_HOST_PORT:-5000}:5000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5000/api/health').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - resto001-network
+
+  admin-web:
+    build:
+      context: ../..
+      dockerfile: app/admin-web/Dockerfile
+    container_name: resto001-admin-web
+    restart: unless-stopped
+    env_file:
+      - ../../.env.docker
+    volumes:
+      - ../../app/admin-web:/app/admin-web
+      - ../../package.json:/app/package.json:ro
+      - admin_web_node_modules:/app/admin-web/node_modules
+    ports:
+      - "${ADMIN_WEB_HOST_PORT:-5174}:5174"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5174').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - resto001-network
+
+  mesonero-web:
+    build:
+      context: ../..
+      dockerfile: app/mesonero-web/Dockerfile
+    container_name: resto001-mesonero-web
+    restart: unless-stopped
+    env_file:
+      - ../../.env.docker
+    volumes:
+      - ../../app/mesonero-web:/app/mesonero-web
+      - ../../package.json:/app/package.json:ro
+      - mesonero_web_node_modules:/app/mesonero-web/node_modules
+    ports:
+      - "${MESONERO_WEB_HOST_PORT:-5173}:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - resto001-network
+
+  mesonero-mobile:
+    build:
+      context: ../..
+      dockerfile: app/mobile/resto-mobile/Dockerfile
+    container_name: resto001-mesonero-mobile
+    restart: unless-stopped
+    env_file:
+      - ../../.env.docker
+    environment:
+      EXPO_PUBLIC_API_URL_LOCAL: http://backend:5000
+      EXPO_PUBLIC_SOCKET_URL: http://backend:5000
+      EXPO_NO_TELEMETRY: "1"
+      CI: "1"
+    volumes:
+      - ../../app/mobile/resto-mobile:/app/resto-mobile
+      - ../../package.json:/app/package.json:ro
+      - mesonero_mobile_node_modules:/app/resto-mobile/node_modules
+    ports:
+      - "${MESONERO_MOBILE_HOST_PORT:-19006}:19006"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:19006').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    networks:
+      - resto001-network
+
+  caja:
+    build:
+      context: ../..
+      dockerfile: app/caja/web/Dockerfile
+    container_name: resto001-caja
+    restart: unless-stopped
+    env_file:
+      - ../../.env.docker
+    volumes:
+      - ../../app/caja/web:/app/caja-web
+      - caja_web_node_modules:/app/caja-web/node_modules
+    ports:
+      - "${CAJA_WEB_HOST_PORT:-5175}:5175"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5175').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - resto001-network
+
+  cocina-web:
+    build:
+      context: ../..
+      dockerfile: app/cocina-web/Dockerfile
+    container_name: resto001-cocina-web
+    restart: unless-stopped
+    env_file:
+      - ../../.env.docker
+    volumes:
+      - ../../app/cocina-web:/app/cocina-web
+      - ../../package.json:/app/package.json:ro
+      - cocina_web_node_modules:/app/cocina-web/node_modules
+    ports:
+      - "${COCINA_WEB_HOST_PORT:-5176}:5174"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5174').then((res)=>process.exit(res.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - resto001-network
+
+networks:
+  resto001-network:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  backend_node_modules:
+  admin_web_node_modules:
+  mesonero_web_node_modules:
+  mesonero_mobile_node_modules:
+  caja_web_node_modules:
+  cocina_web_node_modules:
