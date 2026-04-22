@@ -348,7 +348,7 @@ export default function ActiveOrderScreen() {
           text: 'OK',
           onPress: () => {
             router.replace({
-              pathname: '/',
+              pathname: '/(tabs)',
               params: {
                 orderUpdatedSuccess: successCopy,
               },
@@ -401,8 +401,11 @@ export default function ActiveOrderScreen() {
                 {
                   text: 'OK',
                   onPress: () => {
-                    navigation.navigate('Tables', {
-                      orderUpdatedSuccess: successCopy,
+                    router.replace({
+                      pathname: '/(tabs)',
+                      params: {
+                        orderUpdatedSuccess: successCopy,
+                      },
                     });
                   },
                 },

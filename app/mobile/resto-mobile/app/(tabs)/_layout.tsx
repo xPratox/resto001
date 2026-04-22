@@ -1,10 +1,24 @@
-import { Tabs } from 'expo-router';
+import { Redirect, Tabs } from 'expo-router';
 import React from 'react';
 
+import { useMobileAuth } from '@/lib/auth-session';
 import { useMobileTheme } from '@/src/theme/mobile-theme';
 
 export default function TabLayout() {
+  const { session } = useMobileAuth();
   const { theme } = useMobileTheme();
+
+  if (session?.rol === 'admin') {
+    return <Redirect href="/(admin)" />;
+  }
+
+  if (session?.rol === 'caja') {
+    return <Redirect href="/(caja)" />;
+  }
+
+  if (session?.rol === 'cocina') {
+    return <Redirect href="/(cocina)" />;
+  }
 
   return (
     <Tabs

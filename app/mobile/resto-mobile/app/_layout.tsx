@@ -1,7 +1,7 @@
 import { ThemeProvider } from '@react-navigation/native';
 import { FontAwesome5 } from '@expo/vector-icons';
 import { SpaceGrotesk_500Medium, SpaceGrotesk_700Bold, useFonts } from '@expo-google-fonts/space-grotesk';
-import { Stack } from 'expo-router';
+import { Redirect, Stack, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import axios, { isAxiosError } from 'axios';
 import { useEffect, useMemo, useState } from 'react';
@@ -11,7 +11,7 @@ import 'react-native-reanimated';
 
 import { Fonts, type MobileBrandTheme } from '@/constants/theme';
 import { API_BASE_URL } from '@/lib/api';
-import { MobileAuthContext } from '@/lib/auth-session';
+import { clearMobileSession, loadMobileSession, MobileAuthContext, persistMobileSession, type MobileAuthSession } from '@/lib/auth-session';
 import { restoSocket, setSocketAuthToken } from '@/lib/socket';
 import { MobileThemeProvider, useMobileTheme } from '@/src/theme/mobile-theme';
 
@@ -24,6 +24,20 @@ type ComponentWithStyleDefaults = {
     style?: unknown;
   };
 };
+
+function clearAuthenticatedClients() {
+  delete axios.defaults.headers.common.Authorization;
+  setSocketAuthToken('');
+
+  if (restoSocket.connected) {
+    restoSocket.disconnect();
+  }
+}
+
+function applyAuthenticatedClients(token: string) {
+  axios.defaults.headers.common.Authorization = `Bearer ${token}`;
+  setSocketAuthToken(token);
+}
 
 export default function RootLayout() {
   return (
@@ -40,16 +54,65 @@ function RootLayoutContent() {
   });
   const [usuario, setUsuario] = useState('');
   const [contrasena, setContrasena] = useState('');
-  const [session, setSession] = useState<{ token: string; usuario: string; rol: string } | null>(null);
+  const [session, setSession] = useState<MobileAuthSession>(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
+  const [isAuthClientsReady, setIsAuthClientsReady] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { theme, isDark, toggleTheme, navigationTheme } = useMobileTheme();
+  const segments = useSegments();
   const styles = useMemo(() => createStyles(theme), [theme]);
+  const normalizedRole = String(session?.rol || '').trim().toLowerCase();
+  const isAuthenticated = Boolean(session?.token && normalizedRole);
+  const isMesoneroSession = normalizedRole === 'mesonero';
+  const isAdminSession = normalizedRole === 'admin';
+  const isCajaSession = normalizedRole === 'caja';
+  const isCocinaSession = normalizedRole === 'cocina';
+  const currentRootSegment = String(segments[0] || '');
 
-  const isAuthenticatedMesonero = useMemo(
-    () => Boolean(session?.token && session.rol === 'mesonero'),
-    [session],
-  );
+  const roleHomePath = useMemo(() => {
+    if (isMesoneroSession) {
+      return '/(tabs)';
+    }
+
+    if (isAdminSession) {
+      return '/(admin)';
+    }
+
+    if (isCajaSession) {
+      return '/(caja)';
+    }
+
+    if (isCocinaSession) {
+      return '/(cocina)';
+    }
+
+    return null;
+  }, [isAdminSession, isCajaSession, isCocinaSession, isMesoneroSession]);
+
+  const isRouteAllowedForRole = useMemo(() => {
+    if (!isAuthenticated) {
+      return true;
+    }
+
+    if (isMesoneroSession) {
+      return currentRootSegment === '(tabs)' || currentRootSegment === 'Tables' || currentRootSegment === 'active-order';
+    }
+
+    if (isAdminSession) {
+      return currentRootSegment === '(admin)';
+    }
+
+    if (isCajaSession) {
+      return currentRootSegment === '(caja)';
+    }
+
+    if (isCocinaSession) {
+      return currentRootSegment === '(cocina)';
+    }
+
+    return false;
+  }, [currentRootSegment, isAdminSession, isAuthenticated, isCajaSession, isCocinaSession, isMesoneroSession]);
 
   useEffect(() => {
     const defaultTextStyle = { fontFamily: Fonts?.sans, fontWeight: '500' as const };
@@ -64,10 +127,48 @@ function RootLayoutContent() {
     TextInputWithDefaults.defaultProps.style = [defaultInputStyle, TextInputWithDefaults.defaultProps.style].filter(Boolean);
   }, []);
 
-  if (!fontsLoaded) {
+  useEffect(() => {
+    let isMounted = true;
+
+    void (async () => {
+      const restoredSession = await loadMobileSession();
+
+      if (!isMounted) {
+        return;
+      }
+
+      setSession(restoredSession);
+      setUsuario(restoredSession?.usuario || '');
+      setIsRestoringSession(false);
+    })();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isRestoringSession) {
+      return;
+    }
+
+    if (session?.token) {
+      applyAuthenticatedClients(session.token);
+      setIsAuthClientsReady(true);
+      void persistMobileSession(session);
+      return;
+    }
+
+    clearAuthenticatedClients();
+    setIsAuthClientsReady(true);
+    void clearMobileSession();
+  }, [isRestoringSession, session]);
+
+  if (!fontsLoaded || isRestoringSession || (Boolean(session?.token) && !isAuthClientsReady)) {
     return (
       <SafeAreaView style={styles.loadingScreen}>
         <ActivityIndicator color={theme.accent.primary} />
+        <StatusBar style={isDark ? 'light' : 'dark'} />
       </SafeAreaView>
     );
   }
@@ -88,25 +189,23 @@ function RootLayoutContent() {
       });
 
       const data = response.data || {};
-
-      if (data.rol !== 'mesonero') {
-        throw new Error('Este modulo movil solo permite usuarios con rol mesonero.');
-      }
-
       const token = String(data.token || '');
+      const rol = String(data.rol || '').trim().toLowerCase();
+      const nextUsuario = String(data.usuario || usuario).trim().toLowerCase();
+      const nombre = typeof data.nombre === 'string' ? data.nombre.trim() : '';
 
-      if (!token) {
-        throw new Error('El backend no devolvio token de sesion.');
+      if (!token || !rol || !nextUsuario) {
+        throw new Error('El backend no devolvio una sesion valida.');
       }
 
-      axios.defaults.headers.common.Authorization = `Bearer ${token}`;
-      setSocketAuthToken(token);
-
+      setIsAuthClientsReady(false);
       setSession({
         token,
-        usuario: data.usuario,
-        rol: data.rol,
+        usuario: nextUsuario,
+        rol,
+        nombre,
       });
+      setUsuario(nextUsuario);
       setContrasena('');
     } catch (error) {
       const message = isAxiosError(error)
@@ -125,17 +224,13 @@ function RootLayoutContent() {
   };
 
   const handleLogout = () => {
-    delete axios.defaults.headers.common.Authorization;
-    setSocketAuthToken('');
-    if (restoSocket.connected) {
-      restoSocket.disconnect();
-    }
+    setIsAuthClientsReady(false);
     setSession(null);
     setContrasena('');
     setErrorMessage('');
   };
 
-  if (!isAuthenticatedMesonero) {
+  if (!isAuthenticated) {
     return (
       <SafeAreaView style={styles.authScreen}>
         <View style={styles.authCard}>
@@ -145,7 +240,7 @@ function RootLayoutContent() {
               <Text style={styles.themeToggleText}>{isDark ? 'Claro' : 'Oscuro'}</Text>
             </Pressable>
           </View>
-          <Text style={styles.authTitle}>Login mesonero</Text>
+          <Text style={styles.authTitle}>Login Resto001</Text>
 
           <View style={styles.fieldWrap}>
             <Text style={styles.fieldLabel}>Usuario</Text>
@@ -178,17 +273,49 @@ function RootLayoutContent() {
             {isLoading ? <ActivityIndicator color={theme.text.onAccent} /> : <Text style={styles.loginButtonText}>Entrar</Text>}
           </Pressable>
         </View>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
       </SafeAreaView>
     );
+  }
+
+  if (!isMesoneroSession && !isAdminSession && !isCajaSession && !isCocinaSession) {
+    return (
+      <MobileAuthContext.Provider value={{ session, logout: handleLogout }}>
+        <SafeAreaView style={styles.authScreen}>
+          <View style={styles.authCard}>
+            <View style={styles.authTopRow}>
+              <Pressable onPress={toggleTheme} style={styles.themeTogglePill}>
+                <FontAwesome5 name={isDark ? 'sun' : 'moon'} size={12} color={theme.text.primary} />
+                <Text style={styles.themeToggleText}>{isDark ? 'Claro' : 'Oscuro'}</Text>
+              </Pressable>
+            </View>
+            <Text style={styles.authEyebrow}>ROL DETECTADO</Text>
+            <Text style={styles.authTitle}>{session?.nombre || session?.usuario || 'Usuario'}</Text>
+            <Text style={styles.authSubtitle}>La sesión se autenticó correctamente, pero el módulo móvil para el rol {normalizedRole || 'desconocido'} todavía no está disponible.</Text>
+            <Pressable style={styles.secondaryButton} onPress={handleLogout}>
+              <Text style={styles.secondaryButtonText}>Cerrar sesión</Text>
+            </Pressable>
+          </View>
+          <StatusBar style={isDark ? 'light' : 'dark'} />
+        </SafeAreaView>
+      </MobileAuthContext.Provider>
+    );
+  }
+
+  if (roleHomePath && !isRouteAllowedForRole) {
+    return <Redirect href={roleHomePath} />;
   }
 
   return (
     <MobileAuthContext.Provider value={{ session, logout: handleLogout }}>
       <ThemeProvider value={navigationTheme}>
         <Stack>
-          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-          <Stack.Screen name="Tables" options={{ headerShown: false }} />
-          <Stack.Screen name="active-order" options={{ headerShown: false }} />
+          {isMesoneroSession ? <Stack.Screen name="(tabs)" options={{ headerShown: false }} /> : null}
+          {isMesoneroSession ? <Stack.Screen name="Tables" options={{ headerShown: false }} /> : null}
+          {isMesoneroSession ? <Stack.Screen name="active-order" options={{ headerShown: false }} /> : null}
+          {isAdminSession ? <Stack.Screen name="(admin)" options={{ headerShown: false }} /> : null}
+          {isCajaSession ? <Stack.Screen name="(caja)" options={{ headerShown: false }} /> : null}
+          {isCocinaSession ? <Stack.Screen name="(cocina)" options={{ headerShown: false }} /> : null}
         </Stack>
         <StatusBar style={isDark ? 'light' : 'dark'} />
       </ThemeProvider>
@@ -226,6 +353,13 @@ const createStyles = (theme: MobileBrandTheme) =>
       justifyContent: 'flex-end',
       gap: 12,
     },
+    authEyebrow: {
+      color: theme.text.muted,
+      letterSpacing: 3,
+      fontSize: 11,
+      fontWeight: '700',
+      fontFamily: Fonts?.sans,
+    },
     themeTogglePill: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -249,6 +383,12 @@ const createStyles = (theme: MobileBrandTheme) =>
       lineHeight: 38,
       fontWeight: '700',
       fontFamily: Fonts?.serif,
+    },
+    authSubtitle: {
+      color: theme.text.secondary,
+      fontSize: 14,
+      lineHeight: 22,
+      fontFamily: Fonts?.sans,
     },
     fieldWrap: {
       gap: 6,
@@ -298,6 +438,21 @@ const createStyles = (theme: MobileBrandTheme) =>
     },
     loginButtonText: {
       color: theme.text.onAccent,
+      fontWeight: '700',
+      fontSize: 15,
+      fontFamily: Fonts?.sans,
+    },
+    secondaryButton: {
+      marginTop: 8,
+      borderRadius: 12,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.border.strong,
+      paddingVertical: 12,
+      alignItems: 'center',
+      backgroundColor: theme.background.deepCarbon,
+    },
+    secondaryButtonText: {
+      color: theme.text.primary,
       fontWeight: '700',
       fontSize: 15,
       fontFamily: Fonts?.sans,

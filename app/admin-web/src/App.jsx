@@ -391,6 +391,24 @@ function App() {
     }
   }
 
+  async function handleUserDelete(user) {
+    if (!user?._id) {
+      return
+    }
+
+    if (!window.confirm(`Eliminar a ${user.nombre}?`)) {
+      return
+    }
+
+    try {
+      await fetch(`${API_BASE_URL}/api/admin/users/${user._id}`, { method: 'DELETE' }).then(parseResponse)
+      setBanner({ type: 'success', message: 'Trabajador eliminado correctamente.' })
+      await fetchDashboardData()
+    } catch (deleteError) {
+      setBanner({ type: 'error', message: deleteError.message || 'No se pudo eliminar el trabajador.' })
+    }
+  }
+
   async function handleUpdateTasas(event) {
     event.preventDefault()
     console.log('Accion ejecutada: actualizar tasas')
@@ -465,10 +483,12 @@ function App() {
       userForm={userForm}
       onUserChange={handleUserChange}
       onUserSubmit={handleCrearUsuario}
+      onUserDelete={handleUserDelete}
       onOpenUserDrawer={handleAbrirCrearUsuario}
       onCloseUserDrawer={handleCerrarCrearUsuario}
       isUserDrawerOpen={isStaffDrawerOpen}
       userSaving={userSaving}
+      currentUsername={session?.usuario || ''}
       settingsForm={settingsForm}
       resolvedRates={resolvedRates}
       latestRateUpdate={latestRateUpdate}

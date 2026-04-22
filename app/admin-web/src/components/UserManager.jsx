@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ChevronRight, UserPlus, Users } from 'lucide-react'
+import { ChevronRight, Trash2, UserPlus, Users } from 'lucide-react'
 
 import ModalShell from './ModalShell'
 import StatusIndicator from './StatusIndicator'
@@ -26,10 +26,12 @@ function UserManager({
   form,
   onChange,
   onSubmit,
+  onDelete,
   onOpenDrawer,
   onCloseDrawer,
   isDrawerOpen,
   saving,
+  currentUsername = '',
   report,
   reportRange,
   className = '',
@@ -42,8 +44,8 @@ function UserManager({
       return
     }
 
-    if (!users.some((user) => user._id === selectedUserId)) {
-      setSelectedUserId(users[0]._id)
+    if (selectedUserId && !users.some((user) => user._id === selectedUserId)) {
+      setSelectedUserId('')
     }
   }, [selectedUserId, users])
 
@@ -68,6 +70,7 @@ function UserManager({
   const selectedUser = users.find((user) => user._id === selectedUserId) || null
   const selectedMetrics = selectedUser ? metricsByUser[selectedUser._id] || { ordersHandled: 0, tablesServed: 0, revenue: 0 } : null
   const metricLabel = reportRange === 'today' ? 'hoy' : 'en este rango'
+  const isCurrentSessionUser = selectedUser ? selectedUser.usuario === currentUsername : false
 
   return (
     <section className={`relative flex min-h-0 flex-col overflow-hidden rounded-[24px] sm:rounded-[30px] border border-white/10 bg-slate-900/60 backdrop-blur-md ${className}`}>
@@ -103,32 +106,53 @@ function UserManager({
         <div className="glass-scrollbar min-h-0 flex-1 space-y-2 overflow-auto pr-1">
           {users.map((user) => {
             const isActive = user._id === selectedUserId
+            const isCurrentRowSessionUser = user.usuario === currentUsername
 
             return (
-              <button
-                key={user._id}
-                type="button"
-                onClick={() => setSelectedUserId(user._id)}
-                className={`group flex min-h-11 w-full items-center justify-between rounded-2xl border px-3 py-3 text-left transition ${
-                  isActive
-                    ? 'border-cyan-300/40 bg-cyan-400/10 shadow-[0_0_28px_rgba(34,211,238,0.18)]'
-                    : 'border-white/10 bg-white/5 hover:border-cyan-300/20 hover:bg-cyan-400/6'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className={`flex h-10 w-10 items-center justify-center rounded-2xl text-xs font-semibold ${isActive ? 'bg-cyan-400/15 text-cyan-100' : 'bg-slate-950/70 text-slate-200'}`}>
-                    {getInitials(user.nombre || user.usuario)}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-white">{user.nombre}</p>
-                      <StatusIndicator online={user.is_online} small />
+              <div key={user._id} className="space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedUserId((currentUserId) => (currentUserId === user._id ? '' : user._id))}
+                  className={`user-manager__list-item group flex min-h-11 w-full items-center justify-between rounded-2xl border px-3 py-3 text-left transition ${
+                    isActive
+                      ? 'user-manager__list-item--active'
+                      : 'user-manager__list-item--idle'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`user-manager__avatar flex h-10 w-10 items-center justify-center rounded-2xl text-xs font-semibold ${isActive ? 'user-manager__avatar--active' : 'user-manager__avatar--idle'}`}>
+                      {getInitials(user.nombre || user.usuario)}
                     </div>
-                    <p className="text-xs text-slate-400">@{user.usuario} · {user.rol}</p>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <p className="user-manager__name text-sm font-medium">{user.nombre}</p>
+                        <StatusIndicator online={user.is_online} small />
+                      </div>
+                      <p className="user-manager__meta text-xs">@{user.usuario} · {user.rol}</p>
+                    </div>
                   </div>
-                </div>
-                <ChevronRight className={`h-4 w-4 transition ${isActive ? 'text-cyan-100' : 'text-slate-500 group-hover:text-cyan-200'}`} />
-              </button>
+                  <ChevronRight className={`user-manager__chevron h-4 w-4 transition ${isActive ? 'user-manager__chevron--active' : 'user-manager__chevron--idle'}`} />
+                </button>
+
+                {isActive ? (
+                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/45 px-3 py-3">
+                    <p className="text-xs text-slate-400">
+                      {isCurrentRowSessionUser ? 'Tu sesion actual no se puede eliminar.' : `Acciones para @${user.usuario}`}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => onDelete?.(user)}
+                      disabled={isCurrentRowSessionUser}
+                      className="min-h-11 rounded-2xl border border-rose-400/25 bg-rose-400/10 px-4 py-3 text-sm md:text-base font-semibold text-rose-100 transition hover:border-rose-400/40 hover:bg-rose-400/15 disabled:cursor-not-allowed disabled:opacity-55"
+                    >
+                      <span className="inline-flex items-center gap-2">
+                        <Trash2 className="h-4 w-4" />
+                        Eliminar
+                      </span>
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             )
           })}
 

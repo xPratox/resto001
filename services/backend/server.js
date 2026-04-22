@@ -1700,6 +1700,41 @@ app.post('/api/admin/users', authorizeRoles('admin'), async (req, res) => {
 	}
 });
 
+app.delete('/api/admin/users/:id', authorizeRoles('admin'), async (req, res) => {
+	const userId = String(req.params.id || '').trim();
+
+	if (!userId) {
+		return res.status(400).json({ ok: false, message: 'Debes indicar el usuario a eliminar.' });
+	}
+
+	if (String(req.authUser?.sub || '') === userId) {
+		return res.status(400).json({ ok: false, message: 'No puedes eliminar tu propia sesion de administrador.' });
+	}
+
+	try {
+		const targetUser = await User.findById(userId);
+
+		if (!targetUser) {
+			return res.status(404).json({ ok: false, message: 'El trabajador no existe.' });
+		}
+
+		if (targetUser.rol === 'admin') {
+			const totalAdmins = await User.countDocuments({ rol: 'admin' });
+
+			if (totalAdmins <= 1) {
+				return res.status(400).json({ ok: false, message: 'Debe quedar al menos un administrador activo.' });
+			}
+		}
+
+		await User.findByIdAndDelete(userId);
+		await broadcastStaffStatus();
+
+		return res.json({ ok: true, message: 'Trabajador eliminado.' });
+	} catch (error) {
+		return res.status(500).json({ ok: false, message: 'No se pudo eliminar el trabajador.', error: error.message });
+	}
+});
+
 app.get('/api/admin/settings', authorizeRoles('admin'), async (_req, res) => {
 	try {
 		const [settings, bcv, cop] = await Promise.all([

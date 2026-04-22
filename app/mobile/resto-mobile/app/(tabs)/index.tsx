@@ -954,7 +954,7 @@ export default function HomeScreen() {
         );
         Alert.alert('Pedido actualizado', successCopy);
         router.replace({
-          pathname: '/',
+          pathname: '/(tabs)',
           params: {
             orderUpdatedSuccess: successCopy,
           },
@@ -973,7 +973,7 @@ export default function HomeScreen() {
       );
       Alert.alert('Pedido enviado', successCopy);
       router.replace({
-        pathname: '/',
+        pathname: '/(tabs)',
         params: {
           orderUpdatedSuccess: successCopy,
         },

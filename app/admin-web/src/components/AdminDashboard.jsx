@@ -8,6 +8,8 @@ import Sparkline from './Sparkline'
 import UserManager from './UserManager'
 import ThemeToggle from './ThemeToggle'
 
+const KPI_UNIFIED_ACCENT = 'from-cyan-300/70 via-emerald-300/35 to-transparent'
+
 function formatCurrency(value) {
   return new Intl.NumberFormat('es-VE', {
     style: 'currency',
@@ -74,25 +76,25 @@ function buildStatCards(report) {
       label: 'Ventas',
       value: formatCurrency(kpis.totalRevenue || 0),
       trend: hourlySales.map((slot) => Number(slot?.total || 0)),
-      accent: 'from-[#BF953F]/80 via-[#FCF6BA]/55 to-transparent',
+      accent: KPI_UNIFIED_ACCENT,
     },
     {
       label: 'Ordenes',
       value: String(kpis.totalOrders || 0),
       trend: orderCountByHour,
-      accent: 'from-[#C0C0C0]/70 via-[#F5F5F5]/35 to-transparent',
+      accent: KPI_UNIFIED_ACCENT,
     },
     {
       label: 'Ticket Promedio',
       value: formatCurrency(kpis.averageTicket || 0),
       trend: avgTicketTrend,
-      accent: 'from-[#D4AF37]/70 via-[#C0C0C0]/30 to-transparent',
+      accent: KPI_UNIFIED_ACCENT,
     },
     {
       label: 'Mesas Atendidas',
       value: String(kpis.cleanedTablesCount || 0),
       trend: tableTrend,
-      accent: 'from-[#C0C0C0]/75 via-[#FCF6BA]/26 to-transparent',
+      accent: KPI_UNIFIED_ACCENT,
     },
   ]
 }
@@ -161,7 +163,7 @@ function AdminDashboard(props) {
         label: 'Tasas',
         value: `BCV ${resolvedRates?.bcv?.rate || '--'} / COP ${resolvedRates?.cop?.rate || '--'}`,
         trend: [Number(resolvedRates?.bcv?.rate || 0), Number(resolvedRates?.cop?.rate || 0)],
-        accent: 'from-cyan-300/70 via-emerald-300/35 to-transparent',
+        accent: KPI_UNIFIED_ACCENT,
         helper: latestRateUpdate?.dayKey ? `Actualizada ${latestRateUpdate.dayKey}` : 'Sin actualizacion diaria',
       },
       ...statCards.filter((card) => card.label !== 'Ventas'),
@@ -380,10 +382,12 @@ function AdminDashboard(props) {
                 form={userForm}
                 onChange={onUserChange}
                 onSubmit={onUserSubmit}
+                onDelete={props.onUserDelete}
                 onOpenDrawer={onOpenUserDrawer}
                 onCloseDrawer={onCloseUserDrawer}
                 isDrawerOpen={isUserDrawerOpen}
                 saving={userSaving}
+                currentUsername={props.currentUsername}
                 report={report}
                 reportRange={reportRange}
               />

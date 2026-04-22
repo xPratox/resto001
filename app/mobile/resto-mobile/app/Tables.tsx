@@ -9,7 +9,7 @@ export default function TablesRedirectScreen() {
   return (
     <Redirect
       href={{
-        pathname: '/',
+        pathname: '/(tabs)',
         params: {
           ...(params.paymentSuccess ? { paymentSuccess: params.paymentSuccess } : {}),
           ...(params.orderUpdatedSuccess ? { orderUpdatedSuccess: params.orderUpdatedSuccess } : {}),
