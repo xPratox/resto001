@@ -1,7 +1,9 @@
 import { Ionicons } from '@expo/vector-icons';
+import { useRouter } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -22,6 +24,21 @@ type AdminReportResponse = {
   kpis?: {
     totalRevenue?: number;
   };
+  mesoneroStats?: Array<{
+    usuario?: string;
+    nombre?: string;
+    mesasAtendidas?: number;
+    pagosRegistrados?: number;
+    ultimoServicio?: string;
+  }>;
+};
+
+type MesoneroStat = {
+  usuario: string;
+  nombre: string;
+  mesasAtendidas: number;
+  pagosRegistrados: number;
+  ultimoServicio: string;
 };
 
 type AdminTablesResponse = {
@@ -33,6 +50,14 @@ type AdminTablesResponse = {
 
 type AdminRateResponse = {
   ok?: boolean;
+  manualRates?: {
+    bcv?: {
+      value?: number | null;
+    } | null;
+    cop?: {
+      value?: number | null;
+    } | null;
+  };
   resolvedRates?: {
     bcv?: {
       rate?: number | null;
@@ -101,6 +126,13 @@ type MenuFormState = {
   precio: string;
 };
 
+type UserFormState = {
+  nombre: string;
+  usuario: string;
+  rol: string;
+  contrasena: string;
+};
+
 type AdminSection = 'dashboard' | 'menu' | 'users' | 'settings';
 
 const DEFAULT_MENU_FORM: MenuFormState = {
@@ -110,7 +142,15 @@ const DEFAULT_MENU_FORM: MenuFormState = {
   precio: '',
 };
 
+const DEFAULT_USER_FORM: UserFormState = {
+  nombre: '',
+  usuario: '',
+  rol: 'mesonero',
+  contrasena: '',
+};
+
 const FALLBACK_CATEGORIES = ['Platos', 'Bebidas', 'Postres', 'Especiales'];
+const USER_ROLES = ['admin', 'caja', 'mesonero', 'cocina'];
 const ADMIN_NAV_ITEMS: Array<{ id: AdminSection; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
   { id: 'dashboard', label: 'Dashboard', icon: 'stats-chart-outline' },
   { id: 'menu', label: 'Menu / Platos', icon: 'restaurant-outline' },
@@ -157,21 +197,42 @@ function normalizeUsers(users: AdminUserPayload[] | undefined) {
   }));
 }
 
+function normalizeMesoneroStats(stats: AdminReportResponse['mesoneroStats']) {
+  return (stats || []).map((item, index) => ({
+    usuario: String(item?.usuario || `mesonero-${index}`).trim().toLowerCase(),
+    nombre: String(item?.nombre || item?.usuario || 'Santiago').trim(),
+    mesasAtendidas: Number(item?.mesasAtendidas || 0),
+    pagosRegistrados: Number(item?.pagosRegistrados || 0),
+    ultimoServicio: String(item?.ultimoServicio || '').trim(),
+  })) satisfies MesoneroStat[];
+}
+
 export default function AdminMobileScreen() {
   const { session, logout } = useMobileAuth();
+  const router = useRouter();
   const { theme } = useMobileTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [activeSection, setActiveSection] = useState<AdminSection>('dashboard');
   const [cards, setCards] = useState<DashboardCard[]>([]);
   const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [mesoneroStats, setMesoneroStats] = useState<MesoneroStat[]>([]);
   const [categories, setCategories] = useState<string[]>(FALLBACK_CATEGORIES);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deletingItemId, setDeletingItemId] = useState<string | null>(null);
+  const [editingItem, setEditingItem] = useState<MenuItem | null>(null);
   const [form, setForm] = useState<MenuFormState>(DEFAULT_MENU_FORM);
+  const [isUserModalVisible, setIsUserModalVisible] = useState(false);
+  const [isUserSubmitting, setIsUserSubmitting] = useState(false);
+  const [editingUser, setEditingUser] = useState<StaffMember | null>(null);
+  const [userForm, setUserForm] = useState<UserFormState>(DEFAULT_USER_FORM);
+  const [bcvDraft, setBcvDraft] = useState('');
+  const [copDraft, setCopDraft] = useState('');
+  const [isSavingRates, setIsSavingRates] = useState(false);
 
   const requestJson = useCallback(
     async <T,>(path: string, init?: RequestInit) => {
@@ -219,6 +280,12 @@ export default function AdminMobileScreen() {
         const bcvRate = Number(settings.resolvedRates?.bcv?.rate || 0);
         const copRate = Number(settings.resolvedRates?.cop?.rate || 0);
 
+        const nextBcvDraft = Number(settings.manualRates?.bcv?.value ?? settings.resolvedRates?.bcv?.rate ?? 0);
+        const nextCopDraft = Number(settings.manualRates?.cop?.value ?? settings.resolvedRates?.cop?.rate ?? 0);
+
+        setBcvDraft(Number.isFinite(nextBcvDraft) && nextBcvDraft > 0 ? nextBcvDraft.toFixed(2) : '');
+        setCopDraft(Number.isFinite(nextCopDraft) && nextCopDraft > 0 ? nextCopDraft.toFixed(2) : '');
+
         setCards([
           {
             id: 'ventas-hoy',
@@ -244,6 +311,14 @@ export default function AdminMobileScreen() {
         ]);
         setMenuItems(normalizeMenuItems(menu.items));
         setStaff(normalizeUsers(users.users));
+        const nextMesoneroStats = normalizeMesoneroStats(report.mesoneroStats);
+        setMesoneroStats(nextMesoneroStats.length ? nextMesoneroStats : [{
+          usuario: 'santiago',
+          nombre: 'Santiago',
+          mesasAtendidas: 0,
+          pagosRegistrados: 0,
+          ultimoServicio: '',
+        }]);
 
         const discoveredCategories = Array.from(new Set(normalizeMenuItems(menu.items).map((item) => item.categoria).filter(Boolean)));
         setCategories(discoveredCategories.length ? discoveredCategories : FALLBACK_CATEGORIES);
@@ -261,7 +336,30 @@ export default function AdminMobileScreen() {
     void loadAdminData(true);
   }, [loadAdminData]);
 
-  const handleCreateMenuItem = useCallback(async () => {
+  const closeMenuModal = useCallback(() => {
+    setIsModalVisible(false);
+    setEditingItem(null);
+    setForm(DEFAULT_MENU_FORM);
+  }, []);
+
+  const openCreateMenuModal = useCallback(() => {
+    setEditingItem(null);
+    setForm(DEFAULT_MENU_FORM);
+    setIsModalVisible(true);
+  }, []);
+
+  const openEditMenuModal = useCallback((item: MenuItem) => {
+    setEditingItem(item);
+    setForm({
+      nombre: item.nombre,
+      descripcion: item.descripcion,
+      categoria: item.categoria,
+      precio: String(item.precio),
+    });
+    setIsModalVisible(true);
+  }, []);
+
+  const handleSaveMenuItem = useCallback(async () => {
     const precio = Number.parseFloat(form.precio.replace(',', '.'));
 
     if (!form.nombre.trim() || !form.categoria.trim() || !Number.isFinite(precio) || precio < 0) {
@@ -273,39 +371,170 @@ export default function AdminMobileScreen() {
     setErrorMessage('');
 
     try {
-      await requestJson('/api/admin/menu', {
-        method: 'POST',
+      const payload = {
+        nombre: form.nombre.trim(),
+        descripcion: form.descripcion.trim(),
+        categoria: form.categoria.trim(),
+        precio,
+      };
+
+      await requestJson(editingItem ? `/api/admin/menu/${editingItem.id}` : '/api/admin/menu', {
+        method: editingItem ? 'PATCH' : 'POST',
         body: JSON.stringify({
-          nombre: form.nombre.trim(),
-          descripcion: form.descripcion.trim(),
-          categoria: form.categoria.trim(),
-          precio,
+          ...payload,
         }),
       });
 
-      setForm(DEFAULT_MENU_FORM);
-      setIsModalVisible(false);
+      closeMenuModal();
       await loadAdminData(false);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'No se pudo crear el plato.');
+      setErrorMessage(error instanceof Error ? error.message : 'No se pudo guardar el plato.');
     } finally {
       setIsSubmitting(false);
     }
-  }, [form, loadAdminData, requestJson]);
+  }, [closeMenuModal, editingItem, form, loadAdminData, requestJson]);
+
+  const handleDeleteMenuItem = useCallback(
+    (item: MenuItem) => {
+      Alert.alert('Eliminar producto', `Deseas eliminar "${item.nombre}"?`, [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Eliminar',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              setDeletingItemId(item.id);
+              setErrorMessage('');
+
+              try {
+                await requestJson(`/api/admin/menu/${item.id}`, {
+                  method: 'DELETE',
+                });
+
+                if (editingItem?.id === item.id) {
+                  closeMenuModal();
+                }
+
+                await loadAdminData(false);
+              } catch (error) {
+                setErrorMessage(error instanceof Error ? error.message : 'No se pudo eliminar el plato.');
+              } finally {
+                setDeletingItemId(null);
+              }
+            })();
+          },
+        },
+      ]);
+    },
+    [closeMenuModal, editingItem?.id, loadAdminData, requestJson],
+  );
+
+  const openCreateUserModal = useCallback(() => {
+    setEditingUser(null);
+    setUserForm(DEFAULT_USER_FORM);
+    setIsUserModalVisible(true);
+  }, []);
+
+  const openEditUserModal = useCallback((member: StaffMember) => {
+    setEditingUser(member);
+    setUserForm({
+      nombre: member.nombre,
+      usuario: member.usuario,
+      rol: member.rol,
+      contrasena: '',
+    });
+    setIsUserModalVisible(true);
+  }, []);
+
+  const closeUserModal = useCallback(() => {
+    setIsUserModalVisible(false);
+    setEditingUser(null);
+    setUserForm(DEFAULT_USER_FORM);
+  }, []);
+
+  const handleSaveUser = useCallback(async () => {
+    const payload = {
+      nombre: userForm.nombre.trim(),
+      usuario: userForm.usuario.trim().toLowerCase(),
+      rol: userForm.rol.trim().toLowerCase(),
+      contrasena: userForm.contrasena.trim(),
+    };
+
+    if (!payload.nombre || !payload.usuario || !payload.rol) {
+      setErrorMessage('Debes completar nombre, usuario y rol.');
+      return;
+    }
+
+    if (!editingUser && !payload.contrasena) {
+      setErrorMessage('Para crear usuario debes indicar una contraseña.');
+      return;
+    }
+
+    setIsUserSubmitting(true);
+    setErrorMessage('');
+
+    try {
+      const body = editingUser && !payload.contrasena
+        ? {
+            nombre: payload.nombre,
+            usuario: payload.usuario,
+            rol: payload.rol,
+          }
+        : payload;
+
+      await requestJson(editingUser ? `/api/admin/users/${editingUser.id}` : '/api/admin/users', {
+        method: editingUser ? 'PATCH' : 'POST',
+        body: JSON.stringify(body),
+      });
+
+      closeUserModal();
+      await loadAdminData(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'No se pudo guardar el usuario.');
+    } finally {
+      setIsUserSubmitting(false);
+    }
+  }, [closeUserModal, editingUser, loadAdminData, requestJson, userForm]);
+
+  const handleSaveRates = useCallback(async () => {
+    const parsedBcv = Number.parseFloat(bcvDraft.replace(',', '.'));
+    const parsedCop = Number.parseFloat(copDraft.replace(',', '.'));
+
+    if (!Number.isFinite(parsedBcv) || parsedBcv <= 0 || !Number.isFinite(parsedCop) || parsedCop <= 0) {
+      setErrorMessage('Debes indicar tasas válidas mayores a cero para BCV y COP.');
+      return;
+    }
+
+    setIsSavingRates(true);
+    setErrorMessage('');
+
+    try {
+      await requestJson('/api/admin/settings/rates', {
+        method: 'PUT',
+        body: JSON.stringify({
+          bcv: parsedBcv,
+          cop: parsedCop,
+        }),
+      });
+
+      await loadAdminData(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'No se pudieron actualizar las tasas.');
+    } finally {
+      setIsSavingRates(false);
+    }
+  }, [bcvDraft, copDraft, loadAdminData, requestJson]);
 
   if (!session) {
     return null;
   }
 
+  const isSuperAdmin = String(session.usuario || '').trim().toLowerCase() === 'admin';
+
   const activeSectionLabel = ADMIN_NAV_ITEMS.find((item) => item.id === activeSection)?.label || 'Dashboard';
-  const activeSectionDescription =
-    activeSection === 'dashboard'
-      ? 'Ventas, ocupación y tasas en un espacio enfocado para métricas clave.'
-      : activeSection === 'menu'
-        ? 'Gestiona el menú publicado y registra platos nuevos desde el móvil.'
-        : activeSection === 'users'
-          ? 'Consulta el estado del personal y su disponibilidad operativa.'
-          : 'Consulta tasas activas y estado de la sesión administrativa.';
 
   return (
     <SafeAreaView style={styles.screen}>
@@ -313,9 +542,11 @@ export default function AdminMobileScreen() {
         <View style={styles.headerCopy}>
           <Text style={styles.eyebrow}>ADMIN MOBILE</Text>
           <Text style={styles.title}>{activeSectionLabel}</Text>
-          <Text style={styles.subtitle}>Bienvenido, {session.nombre || session.usuario}. {activeSectionDescription}</Text>
         </View>
         <View style={styles.headerActions}>
+          <Pressable style={styles.ghostButton} onPress={() => router.push('/(admin)/web')}>
+            <Text style={styles.ghostButtonText}>Admin Web</Text>
+          </Pressable>
           <Pressable style={styles.ghostButton} onPress={() => void loadAdminData(false)}>
             {isRefreshing ? <ActivityIndicator size="small" color={theme.text.primary} /> : <Text style={styles.ghostButtonText}>Actualizar</Text>}
           </Pressable>
@@ -346,6 +577,28 @@ export default function AdminMobileScreen() {
                     <Text style={styles.metricHelper}>{card.helper}</Text>
                   </View>
                 ))}
+
+                {isSuperAdmin ? (
+                  <View style={styles.metricCard}>
+                    <View style={styles.metricIconWrap}>
+                      <Ionicons name="people-outline" size={18} color={theme.accent.primary} />
+                    </View>
+                    <Text style={styles.metricLabel}>MESONEROS</Text>
+                    <Text style={styles.metricValue}>{mesoneroStats.length}</Text>
+                    <Text style={styles.metricHelper}>Estadísticas de mesas atendidas por mesonero</Text>
+
+                    <View style={styles.mesoneroStatsList}>
+                      {mesoneroStats.map((mesonero) => (
+                        <View key={mesonero.usuario} style={styles.mesoneroStatRow}>
+                          <View style={styles.mesoneroStatCopy}>
+                            <Text style={styles.mesoneroStatName}>{mesonero.nombre}</Text>
+                            <Text style={styles.mesoneroStatMeta}>{mesonero.mesasAtendidas} mesas atendidas</Text>
+                          </View>
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                ) : null}
               </View>
             ) : null}
 
@@ -370,6 +623,14 @@ export default function AdminMobileScreen() {
                           </View>
                           <Text style={styles.listCardMeta}>{item.categoria}</Text>
                           <Text style={styles.listCardDescription}>{item.descripcion || 'Sin descripción adicional.'}</Text>
+                          <View style={styles.menuActionRow}>
+                            <Pressable style={styles.menuActionButton} onPress={() => openEditMenuModal(item)}>
+                              <Text style={styles.menuActionText}>Editar</Text>
+                            </Pressable>
+                            <Pressable style={styles.menuActionDangerButton} onPress={() => handleDeleteMenuItem(item)} disabled={deletingItemId === item.id}>
+                              {deletingItemId === item.id ? <ActivityIndicator size="small" color={theme.text.onAccent} /> : <Text style={styles.menuActionDangerText}>Eliminar</Text>}
+                            </Pressable>
+                          </View>
                         </View>
                       ))
                     ) : (
@@ -388,9 +649,13 @@ export default function AdminMobileScreen() {
                 <View style={styles.sectionHeader}>
                   <View>
                     <Text style={styles.sectionEyebrow}>PERSONAL</Text>
-                    <Text style={styles.sectionTitle}>Monitor de conexión</Text>
                   </View>
-                  <Text style={styles.sectionMeta}>{staff.length} usuarios</Text>
+                  <View style={styles.sectionHeaderActions}>
+                    <Text style={styles.sectionMeta}>{staff.length} usuarios</Text>
+                    <Pressable style={styles.sectionAddButton} onPress={openCreateUserModal}>
+                      <Text style={styles.sectionAddButtonText}>Nuevo</Text>
+                    </Pressable>
+                  </View>
                 </View>
 
                 <View style={styles.section}>
@@ -402,7 +667,12 @@ export default function AdminMobileScreen() {
                           <Text style={styles.staffName}>{member.nombre}</Text>
                           <Text style={styles.staffMeta}>@{member.usuario || 'sin-usuario'} · {member.rol}</Text>
                         </View>
-                        <Text style={styles.staffStatus}>{member.isOnline ? 'Conectado' : 'Desconectado'}</Text>
+                        <View style={styles.staffActions}>
+                          <Text style={styles.staffStatus}>{member.isOnline ? 'Conectado' : 'Desconectado'}</Text>
+                          <Pressable style={styles.staffEditButton} onPress={() => openEditUserModal(member)}>
+                            <Text style={styles.staffEditButtonText}>Editar</Text>
+                          </Pressable>
+                        </View>
                       </View>
                     ))
                   ) : (
@@ -424,6 +694,42 @@ export default function AdminMobileScreen() {
                   <Text style={styles.metricLabel}>TASA ACTIVA</Text>
                   <Text style={styles.metricValue}>{cards.find((card) => card.id === 'tasa-actual')?.value || 'Sin tasa'}</Text>
                   <Text style={styles.metricHelper}>{cards.find((card) => card.id === 'tasa-actual')?.helper || 'Sin actualización reciente.'}</Text>
+
+                  <View style={styles.ratesEditorGrid}>
+                    <View style={styles.rateFieldWrap}>
+                      <Text style={styles.rateFieldLabel}>BCV</Text>
+                      <TextInput
+                        style={styles.rateFieldInput}
+                        value={bcvDraft}
+                        onChangeText={setBcvDraft}
+                        keyboardType="decimal-pad"
+                        placeholder="0.00"
+                        placeholderTextColor={theme.text.muted}
+                        editable={isSuperAdmin && !isSavingRates}
+                      />
+                    </View>
+
+                    <View style={styles.rateFieldWrap}>
+                      <Text style={styles.rateFieldLabel}>COP</Text>
+                      <TextInput
+                        style={styles.rateFieldInput}
+                        value={copDraft}
+                        onChangeText={setCopDraft}
+                        keyboardType="decimal-pad"
+                        placeholder="0.00"
+                        placeholderTextColor={theme.text.muted}
+                        editable={isSuperAdmin && !isSavingRates}
+                      />
+                    </View>
+                  </View>
+
+                  {isSuperAdmin ? (
+                    <Pressable style={[styles.primaryButton, isSavingRates && styles.primaryButtonDisabled]} onPress={() => void handleSaveRates()} disabled={isSavingRates}>
+                      {isSavingRates ? <ActivityIndicator size="small" color={theme.text.onAccent} /> : <Text style={styles.primaryButtonText}>Guardar tasas</Text>}
+                    </Pressable>
+                  ) : (
+                    <Text style={styles.metricHelper}>Solo el super admin puede actualizar las tasas.</Text>
+                  )}
                 </View>
 
                 <View style={styles.metricCard}>
@@ -443,7 +749,7 @@ export default function AdminMobileScreen() {
           </ScrollView>
 
           {activeSection === 'menu' ? (
-            <Pressable style={styles.fab} onPress={() => setIsModalVisible(true)}>
+            <Pressable style={styles.fab} onPress={openCreateMenuModal}>
               <Ionicons name="add" size={26} color={theme.text.onAccent} />
             </Pressable>
           ) : null}
@@ -468,11 +774,11 @@ export default function AdminMobileScreen() {
         </View>
       )}
 
-      <Modal visible={isModalVisible} animationType="slide" transparent onRequestClose={() => setIsModalVisible(false)}>
+      <Modal visible={isModalVisible} animationType="slide" transparent onRequestClose={closeMenuModal}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalEyebrow}>NUEVO PLATO</Text>
-            <Text style={styles.modalTitle}>Alta rápida de menú</Text>
+            <Text style={styles.modalEyebrow}>{editingItem ? 'EDITAR PLATO' : 'NUEVO PLATO'}</Text>
+            <Text style={styles.modalTitle}>{editingItem ? 'Actualizar producto' : 'Alta rápida de menú'}</Text>
 
             <View style={styles.fieldWrap}>
               <Text style={styles.fieldLabel}>Nombre</Text>
@@ -528,11 +834,83 @@ export default function AdminMobileScreen() {
             </View>
 
             <View style={styles.modalActions}>
-              <Pressable style={styles.ghostButton} onPress={() => setIsModalVisible(false)}>
+              <Pressable style={styles.ghostButton} onPress={closeMenuModal}>
                 <Text style={styles.ghostButtonText}>Cancelar</Text>
               </Pressable>
-              <Pressable style={[styles.primaryButton, isSubmitting && styles.primaryButtonDisabled]} onPress={() => void handleCreateMenuItem()} disabled={isSubmitting}>
-                {isSubmitting ? <ActivityIndicator size="small" color={theme.text.onAccent} /> : <Text style={styles.primaryButtonText}>Guardar</Text>}
+              <Pressable style={[styles.primaryButton, isSubmitting && styles.primaryButtonDisabled]} onPress={() => void handleSaveMenuItem()} disabled={isSubmitting}>
+                {isSubmitting ? <ActivityIndicator size="small" color={theme.text.onAccent} /> : <Text style={styles.primaryButtonText}>{editingItem ? 'Actualizar' : 'Guardar'}</Text>}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={isUserModalVisible} animationType="slide" transparent onRequestClose={closeUserModal}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalEyebrow}>{editingUser ? 'EDITAR USUARIO' : 'NUEVO USUARIO'}</Text>
+            <Text style={styles.modalTitle}>{editingUser ? 'Actualizar personal' : 'Alta de personal'}</Text>
+
+            <View style={styles.fieldWrap}>
+              <Text style={styles.fieldLabel}>Nombre</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={userForm.nombre}
+                onChangeText={(value) => setUserForm((current) => ({ ...current, nombre: value }))}
+                placeholder="Ej. Maria Lopez"
+                placeholderTextColor={theme.text.muted}
+              />
+            </View>
+
+            <View style={styles.fieldWrap}>
+              <Text style={styles.fieldLabel}>Usuario</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={userForm.usuario}
+                autoCapitalize="none"
+                autoCorrect={false}
+                onChangeText={(value) => setUserForm((current) => ({ ...current, usuario: value }))}
+                placeholder="usuario"
+                placeholderTextColor={theme.text.muted}
+              />
+            </View>
+
+            <View style={styles.fieldWrap}>
+              <Text style={styles.fieldLabel}>Rol</Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.categoryRow}>
+                {USER_ROLES.map((roleOption) => {
+                  const isActive = userForm.rol === roleOption;
+
+                  return (
+                    <Pressable
+                      key={roleOption}
+                      style={[styles.categoryChip, isActive && styles.categoryChipActive]}
+                      onPress={() => setUserForm((current) => ({ ...current, rol: roleOption }))}>
+                      <Text style={[styles.categoryChipText, isActive && styles.categoryChipTextActive]}>{roleOption}</Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            </View>
+
+            <View style={styles.fieldWrap}>
+              <Text style={styles.fieldLabel}>{editingUser ? 'Nueva contraseña (opcional)' : 'Contraseña'}</Text>
+              <TextInput
+                style={styles.fieldInput}
+                value={userForm.contrasena}
+                secureTextEntry
+                onChangeText={(value) => setUserForm((current) => ({ ...current, contrasena: value }))}
+                placeholder={editingUser ? 'Dejar vacío para conservar' : 'Clave de acceso'}
+                placeholderTextColor={theme.text.muted}
+              />
+            </View>
+
+            <View style={styles.modalActions}>
+              <Pressable style={styles.ghostButton} onPress={closeUserModal}>
+                <Text style={styles.ghostButtonText}>Cancelar</Text>
+              </Pressable>
+              <Pressable style={[styles.primaryButton, isUserSubmitting && styles.primaryButtonDisabled]} onPress={() => void handleSaveUser()} disabled={isUserSubmitting}>
+                {isUserSubmitting ? <ActivityIndicator size="small" color={theme.text.onAccent} /> : <Text style={styles.primaryButtonText}>{editingUser ? 'Actualizar' : 'Crear'}</Text>}
               </Pressable>
             </View>
           </View>
@@ -614,6 +992,25 @@ const createStyles = (theme: MobileBrandTheme) =>
       fontSize: 12,
       fontFamily: Fonts?.sans,
     },
+    sectionHeaderActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    sectionAddButton: {
+      minHeight: 32,
+      borderRadius: 10,
+      paddingHorizontal: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.accent.primary,
+    },
+    sectionAddButtonText: {
+      color: theme.text.onAccent,
+      fontSize: 12,
+      fontWeight: '700',
+      fontFamily: Fonts?.sans,
+    },
     section: {
       gap: 12,
     },
@@ -659,6 +1056,64 @@ const createStyles = (theme: MobileBrandTheme) =>
       fontSize: 13,
       lineHeight: 20,
       fontFamily: Fonts?.sans,
+    },
+    mesoneroStatsList: {
+      gap: 10,
+      marginTop: 8,
+    },
+    mesoneroStatRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 12,
+      borderRadius: 14,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.border.subtle,
+      backgroundColor: theme.background.deepCarbon,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    mesoneroStatCopy: {
+      flex: 1,
+      gap: 4,
+    },
+    mesoneroStatName: {
+      color: theme.text.primary,
+      fontSize: 15,
+      fontWeight: '700',
+      fontFamily: Fonts?.sans,
+    },
+    mesoneroStatMeta: {
+      color: theme.text.secondary,
+      fontSize: 12,
+      fontFamily: Fonts?.sans,
+    },
+    ratesEditorGrid: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 8,
+    },
+    rateFieldWrap: {
+      flex: 1,
+      gap: 6,
+    },
+    rateFieldLabel: {
+      color: theme.text.muted,
+      fontSize: 11,
+      letterSpacing: 1.5,
+      fontWeight: '700',
+      fontFamily: Fonts?.sans,
+    },
+    rateFieldInput: {
+      borderRadius: 12,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.border.subtle,
+      backgroundColor: theme.background.deepCarbon,
+      color: theme.text.primary,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      fontFamily: Fonts?.sans,
+      fontSize: 14,
     },
     listCard: {
       borderRadius: 18,
@@ -706,6 +1161,41 @@ const createStyles = (theme: MobileBrandTheme) =>
       lineHeight: 20,
       fontFamily: Fonts?.sans,
     },
+    menuActionRow: {
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 6,
+    },
+    menuActionButton: {
+      minHeight: 36,
+      borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.border.strong,
+      backgroundColor: theme.surface.elevated,
+      paddingHorizontal: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    menuActionText: {
+      color: theme.text.primary,
+      fontSize: 12,
+      fontWeight: '700',
+      fontFamily: Fonts?.sans,
+    },
+    menuActionDangerButton: {
+      minHeight: 36,
+      borderRadius: 10,
+      backgroundColor: theme.status.error,
+      paddingHorizontal: 12,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    menuActionDangerText: {
+      color: theme.text.onAccent,
+      fontSize: 12,
+      fontWeight: '700',
+      fontFamily: Fonts?.sans,
+    },
     listRowBetween: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -750,6 +1240,26 @@ const createStyles = (theme: MobileBrandTheme) =>
     },
     staffStatus: {
       color: theme.text.secondary,
+      fontSize: 12,
+      fontWeight: '700',
+      fontFamily: Fonts?.sans,
+    },
+    staffActions: {
+      alignItems: 'flex-end',
+      gap: 8,
+    },
+    staffEditButton: {
+      minHeight: 30,
+      borderRadius: 10,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: theme.border.strong,
+      backgroundColor: theme.surface.elevated,
+      paddingHorizontal: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    staffEditButtonText: {
+      color: theme.text.primary,
       fontSize: 12,
       fontWeight: '700',
       fontFamily: Fonts?.sans,

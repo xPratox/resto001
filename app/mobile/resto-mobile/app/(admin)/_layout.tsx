@@ -20,6 +20,7 @@ export default function AdminMobileLayout() {
   return (
     <Stack>
       <Stack.Screen name="index" options={{ headerShown: false }} />
+      <Stack.Screen name="web" options={{ headerShown: false }} />
     </Stack>
   );
 }

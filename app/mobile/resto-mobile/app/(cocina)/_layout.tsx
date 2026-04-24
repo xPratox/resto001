@@ -5,21 +5,13 @@ import { useMobileAuth } from '@/lib/auth-session';
 export default function CocinaMobileLayout() {
   const { session } = useMobileAuth();
 
-  if (session?.rol === 'mesonero') {
-    return <Redirect href="/(tabs)" />;
-  }
-
   if (session?.rol === 'admin') {
     return <Redirect href="/(admin)" />;
   }
 
-  if (session?.rol === 'caja') {
-    return <Redirect href="/(caja)" />;
+  if (session?.rol === 'mesonero') {
+    return <Redirect href="/(tabs)" />;
   }
 
-  return (
-    <Stack>
-      <Stack.Screen name="index" options={{ headerShown: false }} />
-    </Stack>
-  );
+  return <Redirect href="/" />;
 }

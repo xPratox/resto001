@@ -19,7 +19,7 @@
     "build:mesonero-web": "npm --prefix app/mesonero-web run build",
     "lint:mobile": "npm --prefix app/mobile/resto-mobile run lint",
     "verify:active": "npm run build:admin && npm run build:caja && npm run build:cocina && npm run build:mesonero-web && npm run lint:mobile",
-    "docker:up": "bash ./infra/scripts/docker-up.sh",
+    "docker:up": "npm run docker:up:docker && npm --prefix app/mobile/resto-mobile run start -- --lan",
     "docker:up:docker": "docker compose -p resto001 --env-file .env.docker -f infra/docker/docker-compose.yml up --build -d",
     "docker:up:fg": "docker compose -p resto001 --env-file .env.docker -f infra/docker/docker-compose.yml up --build",
     "docker:down": "docker compose -p resto001 --env-file .env.docker -f infra/docker/docker-compose.yml down",

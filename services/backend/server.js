@@ -147,6 +147,7 @@ const DEFAULT_AUTH_USERS = [...baseAuthUsers, ...extraMesoneroUsers].filter((can
 
 	return candidates.findIndex((item) => item.usuario === candidate.usuario) === index;
 });
+const SUPER_ADMIN_USERNAME = String(process.env.AUTH_ADMIN_USUARIO || 'admin').trim().toLowerCase();
 const HISTORY_TIMEZONE = process.env.HISTORY_TIMEZONE || 'America/Caracas';
 const EXCHANGE_RATE_TIMEZONE = process.env.EXCHANGE_RATE_TIMEZONE || HISTORY_TIMEZONE;
 const STATS_UTC_OFFSET_HOURS = Number(process.env.STATS_UTC_OFFSET_HOURS || 4);
@@ -154,6 +155,7 @@ const AUTO_RECOVER_PORT = process.env.AUTO_RECOVER_PORT !== 'false';
 const PORT_RECOVERY_WAIT_MS = 250;
 const PORT_RECOVERY_MAX_ATTEMPTS = 12;
 const RATE_HISTORY_LIMIT = 14;
+const KITCHEN_COMANDA_LIMIT = 50;
 const TABLE_DEFINITIONS = [
 	{ table: 'Mesa 1', section: 'Sala', capacity: 4, highlighted: false },
 	{ table: 'Mesa 2', section: 'Sala', capacity: 4, highlighted: false },
@@ -170,6 +172,7 @@ const TABLE_DEFINITIONS = [
 const TABLES = TABLE_DEFINITIONS.map((table) => table.table);
 const ORDER_STATUS = {
 	AVAILABLE: 'disponible',
+	PENDING: 'pendiente',
 	KITCHEN: 'en_cocina',
 	DELIVERED: 'entregado',
 	CLEANING: 'limpieza',
@@ -220,7 +223,7 @@ function getVisibleTableStatus(order) {
 function buildActiveOrdersFilter(extra = {}) {
 	return {
 		...extra,
-		status: { $in: [ORDER_STATUS.KITCHEN, ORDER_STATUS.DELIVERED, ORDER_STATUS.CLEANING] },
+		status: { $in: [ORDER_STATUS.PENDING, ORDER_STATUS.KITCHEN, ORDER_STATUS.DELIVERED, ORDER_STATUS.CLEANING] },
 		mesa_liberada: { $ne: true },
 	};
 }
@@ -306,6 +309,11 @@ function emitOrderRealtime(action, order) {
 	if (action === 'paid') {
 		io.emit('CAMBIO_ESTADO_MESA', payload);
 		io.emit('mesa_en_limpieza', payload);
+		io.emit('mesa_actualizada', payload);
+	}
+
+	if (action === 'payment_pending') {
+		io.emit('CAMBIO_ESTADO_MESA', payload);
 		io.emit('mesa_actualizada', payload);
 	}
 
@@ -550,6 +558,32 @@ function normalizeOrderItem(item) {
 	};
 }
 
+async function isSingleDrinkOnlyOrder(order) {
+	const orderItems = Array.isArray(order?.items) ? order.items : [];
+
+	if (orderItems.length !== 1) {
+		return false;
+	}
+
+	const [onlyItem] = orderItems;
+	const quantity = Number(onlyItem?.cantidad || 1);
+
+	if (!Number.isFinite(quantity) || quantity !== 1) {
+		return false;
+	}
+
+	const itemName = String(onlyItem?.name || '').trim();
+
+	if (!itemName) {
+		return false;
+	}
+
+	const menuItem = await MenuItem.findOne({ nombre: itemName }).lean();
+	const category = String(menuItem?.categoria || '').trim().toLowerCase();
+
+	return category.includes('bebida');
+}
+
 function hasRemovedItems(currentItems, nextItems) {
 	const nextItemIds = new Set(
 		nextItems
@@ -637,11 +671,12 @@ const orderSchema = new mongoose.Schema(
 		],
 		status: {
 			type: String,
-			enum: [ORDER_STATUS.KITCHEN, ORDER_STATUS.DELIVERED, ORDER_STATUS.CLEANING, ORDER_STATUS.PAID],
+			enum: [ORDER_STATUS.PENDING, ORDER_STATUS.KITCHEN, ORDER_STATUS.DELIVERED, ORDER_STATUS.CLEANING, ORDER_STATUS.PAID],
 			default: ORDER_STATUS.KITCHEN,
 			trim: true,
 		},
 		preparedAt: { type: Date, default: null },
+		comanda_impresa_at: { type: Date, default: null },
 		hora_pago: { type: Date, default: null },
 		mesa_liberada: { type: Boolean, default: false },
 	},
@@ -651,6 +686,69 @@ const orderSchema = new mongoose.Schema(
 );
 
 const Order = mongoose.models.Order || mongoose.model('Order', orderSchema);
+
+const kitchenComandaSchema = new mongoose.Schema(
+	{
+		orderId: { type: String, required: true, index: true, trim: true },
+		numeroMesa: { type: String, required: true, trim: true },
+		pago: { type: String, default: 'EFECTIVO', trim: true },
+		items: [
+			{
+				cantidad: { type: Number, required: true, min: 1 },
+				nombre: { type: String, required: true, trim: true },
+			},
+		],
+		abono: { type: Number, required: true, min: 0, default: 0 },
+		total: { type: Number, required: true, min: 0, default: 0 },
+	},
+	{
+		timestamps: true,
+	}
+);
+
+const KitchenComanda = mongoose.models.KitchenComanda || mongoose.model('KitchenComanda', kitchenComandaSchema);
+
+function buildKitchenComandaPayload(record) {
+	if (!record) {
+		return null;
+	}
+
+	return {
+		idComanda: String(record._id || ''),
+		orderId: String(record.orderId || ''),
+		numeroMesa: String(record.numeroMesa || ''),
+		pago: String(record.pago || 'EFECTIVO').trim().toUpperCase(),
+		items: Array.isArray(record.items)
+			? record.items
+					.map((item) => ({
+						cantidad: Number(item?.cantidad || 0),
+						nombre: String(item?.nombre || '').trim(),
+					}))
+					.filter((item) => item.cantidad > 0 && item.nombre)
+			: [],
+		abono: Number(record.abono || 0),
+		total: Number(record.total || 0),
+		createdAt: record.createdAt || null,
+	};
+}
+
+async function pruneKitchenComandas(limit = KITCHEN_COMANDA_LIMIT) {
+	const extraRecords = await KitchenComanda.find({})
+		.sort({ createdAt: -1 })
+		.skip(limit)
+		.select({ _id: 1 })
+		.lean();
+
+	if (!extraRecords.length) {
+		return;
+	}
+
+	await KitchenComanda.deleteMany({
+		_id: {
+			$in: extraRecords.map((record) => record._id),
+		},
+	});
+}
 
 const exchangeRateSchema = new mongoose.Schema(
 	{
@@ -1052,6 +1150,7 @@ function resolveHistoryRange(rangeKey) {
 async function buildOrdersHistoryResponse(rangeKey) {
 	const selectedRange = resolveHistoryRange(String(rangeKey || 'today').trim().toLowerCase());
 	const [history] = await Order.aggregate(buildPaidOrdersHistoryPipeline());
+	const mesoneroUsers = await User.find({ rol: 'mesonero' }).select({ usuario: 1, nombre: 1 }).lean();
 	const allSummaryByDay = history?.summaryByDay || [];
 	const allTransactions = history?.transactions || [];
 	const transactions = allTransactions.filter((transaction) => {
@@ -1098,6 +1197,68 @@ async function buildOrdersHistoryResponse(rangeKey) {
 			transactionsCount: uniqueOrders.size,
 			totalRevenue: Number(totalRevenue.toFixed(2)),
 		};
+	const mesoneroNameMap = new Map(
+		mesoneroUsers.map((user) => [
+			String(user?.usuario || '').trim().toLowerCase(),
+			String(user?.nombre || buildDisplayName(user?.usuario) || '').trim(),
+		])
+	);
+	const fallbackMesoneros = mesoneroUsers.length
+		? mesoneroUsers
+		: [{ usuario: 'santiago', nombre: 'Santiago' }];
+	const mesoneroStatsMap = new Map(
+		fallbackMesoneros.map((user) => [
+			String(user?.usuario || '').trim().toLowerCase(),
+			{
+				usuario: String(user?.usuario || '').trim().toLowerCase(),
+				nombre: String(user?.nombre || buildDisplayName(user?.usuario) || 'Mesonero').trim(),
+				mesas: new Set(),
+				pagos: 0,
+				ultimoServicio: '',
+			},
+		])
+	);
+
+	const transactionsWithMesonero = transactions.map((transaction) => {
+		const mesoneroUsuario = String(transaction?.mesonero_usuario || '').trim().toLowerCase();
+		const mesoneroNombre =
+			mesoneroNameMap.get(mesoneroUsuario) ||
+			(mesoneroUsuario ? buildDisplayName(mesoneroUsuario) : 'Santiago');
+		const statsKey = mesoneroUsuario || 'santiago';
+
+		if (!mesoneroStatsMap.has(statsKey)) {
+			mesoneroStatsMap.set(statsKey, {
+				usuario: statsKey,
+				nombre: mesoneroNombre,
+				mesas: new Set(),
+				pagos: 0,
+				ultimoServicio: '',
+			});
+		}
+
+		const stats = mesoneroStatsMap.get(statsKey);
+		stats.pagos += 1;
+		if (transaction?.table) {
+			stats.mesas.add(String(transaction.table));
+			stats.ultimoServicio = String(transaction.table);
+		}
+
+		return {
+			...transaction,
+			mesonero_nombre: mesoneroNombre,
+			mesa_atendida: String(transaction?.table || ''),
+		};
+	});
+
+	const mesoneroStats = Array.from(mesoneroStatsMap.values())
+		.map((entry) => ({
+			usuario: entry.usuario,
+			nombre: entry.nombre,
+			mesasAtendidas: entry.mesas.size,
+			pagosRegistrados: entry.pagos,
+			ultimoServicio: entry.ultimoServicio,
+		}))
+		.sort((left, right) => right.mesasAtendidas - left.mesasAtendidas || right.pagosRegistrados - left.pagosRegistrados || left.nombre.localeCompare(right.nombre));
 
 	return {
 		ok: true,
@@ -1107,6 +1268,7 @@ async function buildOrdersHistoryResponse(rangeKey) {
 		totalTransactions: transactions.length,
 		daySummary,
 		summaryByDay,
+		mesoneroStats,
 		kpis: {
 			totalRevenue: Number(totalRevenue.toFixed(2)),
 			totalOrders: uniqueOrders.size,
@@ -1121,7 +1283,7 @@ async function buildOrdersHistoryResponse(rangeKey) {
 			method,
 			total,
 		})),
-		transactions,
+		transactions: transactionsWithMesonero,
 	};
 }
 
@@ -1382,6 +1544,19 @@ function authorizeRoles(...allowedRoles) {
 
 		return next();
 	};
+}
+
+function authorizeSuperAdmin(req, res, next) {
+	const username = String(req.authUser?.usuario || '').trim().toLowerCase();
+
+	if (username !== SUPER_ADMIN_USERNAME) {
+		return res.status(403).json({
+			ok: false,
+			message: 'Solo el super admin puede modificar las tasas.',
+		});
+	}
+
+	return next();
 }
 
 function broadcastGlobalOrder(pedido) {
@@ -1700,6 +1875,63 @@ app.post('/api/admin/users', authorizeRoles('admin'), async (req, res) => {
 	}
 });
 
+app.patch('/api/admin/users/:id', authorizeRoles('admin'), async (req, res) => {
+	const userId = String(req.params.id || '').trim();
+	const nombre = String(req.body?.nombre || '').trim();
+	const usuario = String(req.body?.usuario || '').trim().toLowerCase();
+	const contrasena = String(req.body?.contrasena || '').trim();
+	const rol = String(req.body?.rol || '').trim().toLowerCase();
+
+	if (!userId) {
+		return res.status(400).json({ ok: false, message: 'Debes indicar el usuario a editar.' });
+	}
+
+	if (!nombre || !usuario || !rol) {
+		return res.status(400).json({ ok: false, message: 'Debes completar nombre, usuario y rol.' });
+	}
+
+	if (!['admin', 'caja', 'mesonero', 'cocina'].includes(rol)) {
+		return res.status(400).json({ ok: false, message: 'Rol invalido.' });
+	}
+
+	try {
+		const targetUser = await User.findById(userId);
+
+		if (!targetUser) {
+			return res.status(404).json({ ok: false, message: 'El trabajador no existe.' });
+		}
+
+		const existingUser = await User.findOne({ usuario, _id: { $ne: targetUser._id } });
+
+		if (existingUser) {
+			return res.status(409).json({ ok: false, message: 'El nombre de usuario ya existe.' });
+		}
+
+		if (targetUser.rol === 'admin' && rol !== 'admin') {
+			const totalAdmins = await User.countDocuments({ rol: 'admin' });
+
+			if (totalAdmins <= 1) {
+				return res.status(400).json({ ok: false, message: 'Debe quedar al menos un administrador activo.' });
+			}
+		}
+
+		targetUser.nombre = nombre;
+		targetUser.usuario = usuario;
+		targetUser.rol = rol;
+
+		if (contrasena) {
+			targetUser.contrasena = contrasena;
+		}
+
+		await targetUser.save();
+		await broadcastStaffStatus();
+
+		return res.json({ ok: true, user: serializeUser(targetUser) });
+	} catch (error) {
+		return res.status(500).json({ ok: false, message: 'No se pudo editar el trabajador.', error: error.message });
+	}
+});
+
 app.delete('/api/admin/users/:id', authorizeRoles('admin'), async (req, res) => {
 	const userId = String(req.params.id || '').trim();
 
@@ -1749,7 +1981,7 @@ app.get('/api/admin/settings', authorizeRoles('admin'), async (_req, res) => {
 	}
 });
 
-app.put('/api/admin/settings/rates', authorizeRoles('admin'), async (req, res) => {
+app.put('/api/admin/settings/rates', authorizeRoles('admin'), authorizeSuperAdmin, async (req, res) => {
 	const parsedBcv = req.body?.bcv === '' || req.body?.bcv == null ? null : parseCurrency(req.body?.bcv);
 	const parsedCop = req.body?.cop === '' || req.body?.cop == null ? null : parseCurrency(req.body?.cop);
 
@@ -1962,7 +2194,7 @@ app.get('/api/stats/ventas', async (req, res) => {
 	}
 });
 
-app.put('/api/exchange-rate/today', authorizeRoles('admin'), async (req, res) => {
+app.put('/api/exchange-rate/today', authorizeRoles('admin'), authorizeSuperAdmin, async (req, res) => {
 	const parsedRate = parseCurrency(req.body?.rate);
 	const rateType = normalizeRateType(req.query?.type || req.body?.type);
 	const { label } = getRateModelByType(rateType);
@@ -2106,17 +2338,15 @@ app.get('/api/kitchen/orders', authorizeRoles('cocina'), async (_req, res) => {
 
 app.get('/api/kitchen/history', authorizeRoles('cocina'), async (_req, res) => {
 	try {
-		const orders = await Order.find({
-			status: { $in: [ORDER_STATUS.KITCHEN, ORDER_STATUS.DELIVERED, ORDER_STATUS.CLEANING, ORDER_STATUS.PAID] },
-		})
+		const comandas = await KitchenComanda.find({})
 			.sort({ createdAt: -1 })
-			.limit(200)
+			.limit(KITCHEN_COMANDA_LIMIT)
 			.lean();
 
 		return res.json({
 			ok: true,
-			orders: orders
-				.map((order) => sanitizeKitchenOrder(order))
+			orders: comandas
+				.map((record) => buildKitchenComandaPayload(record))
 				.filter(Boolean),
 		});
 	} catch (error) {
@@ -2125,6 +2355,84 @@ app.get('/api/kitchen/history', authorizeRoles('cocina'), async (_req, res) => {
 			message: 'No se pudo cargar el historial de comandas.',
 			error: error.message,
 		});
+	}
+});
+
+app.post('/api/kitchen/comandas/print', authorizeRoles('caja', 'admin'), async (req, res) => {
+	const orderId = String(req.body?.orderId || '').trim();
+	const metodoPago = String(req.body?.metodo || 'efectivo').trim().toUpperCase();
+
+	if (!orderId) {
+		return res.status(400).json({ ok: false, message: 'Debes indicar el ID del pedido para imprimir la comanda.' });
+	}
+
+	try {
+		const order = await Order.findById(orderId);
+
+		if (!order) {
+			return res.status(404).json({ ok: false, message: 'El pedido no existe.' });
+		}
+
+		if (order.mesa_liberada === true || order.status === ORDER_STATUS.PAID) {
+			return res.status(400).json({ ok: false, message: 'La orden ya fue cerrada y no admite comanda.' });
+		}
+
+		if (order.comanda_impresa_at) {
+			return res.status(200).json({
+				ok: true,
+				alreadyPrinted: true,
+				message: 'La comanda ya fue impresa para esta orden.',
+				order,
+			});
+		}
+
+		if (await isSingleDrinkOnlyOrder(order)) {
+			return res.status(400).json({
+				ok: false,
+				message: 'Una orden de una sola bebida se cobra directo y no genera comanda.',
+				soloBebidaSinComanda: true,
+			});
+		}
+
+		const groupedItems = new Map();
+
+		(order.items || []).forEach((item) => {
+			const nombre = String(item?.name || '').trim();
+			const cantidad = Number(item?.cantidad || 1);
+
+			if (!nombre || !Number.isFinite(cantidad) || cantidad <= 0) {
+				return;
+			}
+
+			groupedItems.set(nombre, (groupedItems.get(nombre) || 0) + cantidad);
+		});
+
+		const comanda = await KitchenComanda.create({
+			orderId: String(order._id),
+			numeroMesa: String(order.table || ''),
+			pago: metodoPago || 'EFECTIVO',
+			items: Array.from(groupedItems.entries()).map(([nombre, cantidad]) => ({ nombre, cantidad })),
+			abono: roundCurrency(Number(order.montoPagado || 0)),
+			total: roundCurrency(Number(order.total || 0)),
+		});
+
+		order.comanda_impresa_at = new Date();
+
+		if (!hasRegisteredPayment(order) && Number(order.montoPagado || 0) < Number(order.total || 0)) {
+			order.status = ORDER_STATUS.PENDING;
+		}
+
+		await order.save();
+
+		await pruneKitchenComandas(KITCHEN_COMANDA_LIMIT);
+
+		const payload = buildKitchenComandaPayload(comanda);
+		io.emit('comanda_impresa', payload);
+		emitOrderRealtime('payment_pending', order);
+
+		return res.status(201).json({ ok: true, comanda: payload, order });
+	} catch (error) {
+		return res.status(500).json({ ok: false, message: 'No se pudo imprimir la comanda.', error: error.message });
 	}
 });
 
@@ -2184,9 +2492,14 @@ app.get('/api/orders/:id', authorizeRoles('mesonero', 'caja'), async (req, res) 
 			});
 		}
 
+		const soloBebidaSinComanda = await isSingleDrinkOnlyOrder(order);
+
 		return res.json({
 			ok: true,
-			order,
+			order: {
+				...(typeof order.toObject === 'function' ? order.toObject() : order),
+				soloBebidaSinComanda,
+			},
 		});
 	} catch (error) {
 		return res.status(400).json({
@@ -2218,9 +2531,14 @@ app.get('/api/orders/active/table/:table', authorizeRoles('mesonero', 'caja'), a
 			});
 		}
 
+		const soloBebidaSinComanda = await isSingleDrinkOnlyOrder(order);
+
 		return res.json({
 			ok: true,
-			order,
+			order: {
+				...(typeof order.toObject === 'function' ? order.toObject() : order),
+				soloBebidaSinComanda,
+			},
 		});
 	} catch (error) {
 		return res.status(400).json({
@@ -2696,7 +3014,12 @@ app.patch('/api/orders/:id/pay', authorizeRoles('caja'), async (req, res) => {
 			order.mesa_liberada = false;
 			console.log(`Pedido enviado a limpieza: ${order.table}`);
 		} else {
-			order.status = order.status === ORDER_STATUS.DELIVERED ? ORDER_STATUS.DELIVERED : ORDER_STATUS.KITCHEN;
+			order.status =
+				order.status === ORDER_STATUS.DELIVERED
+					? ORDER_STATUS.DELIVERED
+					: order.status === ORDER_STATUS.PENDING
+						? ORDER_STATUS.PENDING
+						: ORDER_STATUS.KITCHEN;
 			order.hora_pago = null;
 			order.mesa_liberada = false;
 		}

@@ -20,7 +20,7 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, DoughnutCon
 
 const AUTH_STORAGE_KEY = 'resto001:auth:caja'
 const DASHBOARD_TIMEZONE = 'America/Caracas'
-const CAJA_PAYABLE_STATUSES = ['en_cocina', 'entregado']
+const CAJA_PAYABLE_STATUSES = ['pendiente', 'en_cocina', 'entregado']
 const PAYMENT_METHOD_OPTIONS = ['efectivo', 'tarjeta', 'transferencia', 'binance']
 const REPORT_RANGE_OPTIONS = [
   { value: 'today', label: 'Hoy' },
@@ -36,10 +36,20 @@ function requestJson(url, options = {}) {
     },
     ...options,
   }).then(async (response) => {
-    const payload = await response.json().catch(() => ({}))
+    const rawText = await response.text().catch(() => '')
+    let payload = {}
+
+    if (rawText) {
+      try {
+        payload = JSON.parse(rawText)
+      } catch {
+        payload = { message: rawText }
+      }
+    }
 
     if (!response.ok) {
-      throw new Error(payload.message || 'Error en la solicitud')
+      const statusPrefix = `HTTP ${response.status}`
+      throw new Error(payload.message ? `${statusPrefix}: ${payload.message}` : `${statusPrefix}: Error en la solicitud`)
     }
 
     return payload
@@ -112,6 +122,122 @@ function formatMesaSelectionLabel(mesa) {
   return numberMatch[1].padStart(2, '0')
 }
 
+function escapeTicketText(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+function buildComandaHtml(pedido) {
+  const itemsHtml = (pedido?.items || [])
+    .map((item) => {
+      const note = String(item?.nota || '').trim()
+      const hasNote = note && note.toLowerCase() !== 'sin notas'
+
+      return `<tr>
+        <td>${item.cantidad || 1}</td>
+        <td>
+          <div class="item-name">${escapeTicketText(item.nombre || '')}</div>
+          ${hasNote ? `<div class="item-note">Nota: ${escapeTicketText(note)}</div>` : ''}
+        </td>
+      </tr>`
+    })
+    .join('')
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Comanda ${escapeTicketText(pedido?.mesa || '')}</title>
+    <style>
+      @page { size: 58mm auto; margin: 2mm; }
+      body { font-family: monospace; margin: 0; padding: 0; width: 56mm; }
+      .ticket { width: 56mm; }
+      h1 { font-size: 20px; margin: 0 0 8px; }
+      p { margin: 2px 0; font-size: 14px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+      th, td { font-size: 13px; text-align: left; padding: 2px 0; }
+      .item-name { font-size: 13px; }
+      .item-note { font-size: 12px; opacity: 0.9; }
+    </style>
+  </head>
+  <body>
+    <div class="ticket">
+      <h1>Comanda</h1>
+      <p>Mesa: ${escapeTicketText(pedido?.mesa || '--')}</p>
+      <table>
+        <thead><tr><th>Cant</th><th>Item</th></tr></thead>
+        <tbody>${itemsHtml}</tbody>
+      </table>
+    </div>
+  </body>
+</html>`
+}
+
+function printComandaInCurrentPage(pedido) {
+  return new Promise((resolve, reject) => {
+    const iframe = document.createElement('iframe')
+    let settled = false
+
+    const cleanup = () => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+
+      if (iframe.parentNode) {
+        iframe.parentNode.removeChild(iframe)
+      }
+    }
+
+    iframe.style.position = 'fixed'
+    iframe.style.right = '0'
+    iframe.style.bottom = '0'
+    iframe.style.width = '0'
+    iframe.style.height = '0'
+    iframe.style.border = '0'
+
+    const triggerPrint = () => {
+      try {
+        const frameWindow = iframe.contentWindow
+
+        if (!frameWindow) {
+          throw new Error('No se pudo abrir el visor de impresion interno.')
+        }
+
+        frameWindow.focus()
+        frameWindow.print()
+
+        window.setTimeout(() => {
+          cleanup()
+          resolve(true)
+        }, 500)
+      } catch (error) {
+        cleanup()
+        reject(error)
+      }
+    }
+
+    document.body.appendChild(iframe)
+
+    const frameDocument = iframe.contentDocument
+
+    if (!frameDocument) {
+      cleanup()
+      reject(new Error('No se pudo preparar el documento de impresion.'))
+      return
+    }
+
+    frameDocument.open()
+    frameDocument.write(buildComandaHtml(pedido))
+    frameDocument.close()
+
+    window.setTimeout(triggerPrint, 250)
+  })
+}
+
 function parseDecimalInput(value) {
   const normalized = String(value ?? '').replace(',', '.').trim()
   const parsed = Number.parseFloat(normalized)
@@ -160,12 +286,22 @@ function normalizePedido(order) {
     total,
     montoPagado,
     restante,
+    comandaImpresaAt: order.comanda_impresa_at || null,
+    soloBebidaSinComanda: Boolean(order.soloBebidaSinComanda || order.solo_bebida_sin_comanda),
     clienteNombre: order.cliente_nombre || '',
     items: Array.from(groupedItems.values()),
   }
 }
 
 function getPedidoStatusMeta(status) {
+  if (status === 'pendiente') {
+    return {
+      cardClass: 'status-entregado',
+      badgeClass: 'ok',
+      label: 'PENDIENTE PAGO',
+    }
+  }
+
   if (status === 'limpieza') {
     return {
       cardClass: 'status-pagado',
@@ -264,6 +400,7 @@ export default function App() {
   const [metodoPago, setMetodoPago] = useState('efectivo')
   const [montoRecibido, setMontoRecibido] = useState('')
   const [monedaPago, setMonedaPago] = useState('USD')
+  const [imprimirComandaAlCobrar, setImprimirComandaAlCobrar] = useState(true)
   const [dailyBcvRate, setDailyBcvRate] = useState(null)
   const [dailyPesoRate, setDailyPesoRate] = useState(null)
   const [canEditBcvRate, setCanEditBcvRate] = useState(true)
@@ -324,7 +461,12 @@ export default function App() {
   )
 
   const monitorOrders = useMemo(
-    () => orders.filter((pedido) => CAJA_PAYABLE_STATUSES.includes(pedido.estado)),
+    () => orders.filter((pedido) => CAJA_PAYABLE_STATUSES.includes(pedido.estado) && !pedido.comandaImpresaAt),
+    [orders],
+  )
+
+  const pendingPrintedOrders = useMemo(
+    () => orders.filter((pedido) => CAJA_PAYABLE_STATUSES.includes(pedido.estado) && Boolean(pedido.comandaImpresaAt) && pedido.restante > 0),
     [orders],
   )
 
@@ -420,6 +562,7 @@ export default function App() {
   }), [reportData])
 
   const paymentBreakdown = reportData?.paymentMethodBreakdown || []
+  const mesoneroStats = reportData?.mesoneroStats || []
   const doughnutPalette = ['#00D8FF', '#10B981', '#F97316', '#64748B', '#FFFFFF']
   const doughnutData = useMemo(() => ({
     labels: paymentBreakdown.map((item) => formatReportMethod(item.method)),
@@ -589,8 +732,8 @@ export default function App() {
 
     setDailyBcvRate(Number.isFinite(parsedBcvRate) && parsedBcvRate > 0 ? parsedBcvRate : null)
     setDailyPesoRate(Number.isFinite(parsedPesoRate) && parsedPesoRate > 0 ? parsedPesoRate : null)
-    setCanEditBcvRate(Boolean(bcvData.canEdit))
-    setCanEditPesoRate(Boolean(pesoData.canEdit))
+    setCanEditBcvRate(false)
+    setCanEditPesoRate(false)
     setBcvDraft(Number.isFinite(parsedBcvRate) && parsedBcvRate > 0 ? parsedBcvRate.toFixed(2) : '')
     setPesoDraft(Number.isFinite(parsedPesoRate) && parsedPesoRate > 0 ? parsedPesoRate.toFixed(2) : '')
   }
@@ -810,6 +953,8 @@ export default function App() {
 
     try {
       const orderLookup = await requestCentral(`/api/orders/active/table/${encodeURIComponent(selectedMesa)}`)
+      await maybePrintComandaBeforePayment(orderLookup, metodoPago)
+
       await requestCentral(`/api/orders/${orderLookup.order._id}/pay`, {
         method: 'PATCH',
         body: JSON.stringify({
@@ -828,6 +973,72 @@ export default function App() {
       }
     } catch (error) {
       setErrorMessage(error.message || 'No se pudo registrar el pago.')
+    }
+  }
+
+  const handlePrintComanda = async (pedido) => {
+    if (!pedido?._id) {
+      setErrorMessage('No se pudo identificar el pedido para imprimir.')
+      return
+    }
+
+    if (pedido.soloBebidaSinComanda) {
+      setErrorMessage('Una sola bebida se cobra directo y no genera comanda.')
+      return
+    }
+
+    try {
+      const metodo = metodoPago || 'efectivo'
+
+      await requestCentral('/api/kitchen/comandas/print', {
+        method: 'POST',
+        body: JSON.stringify({
+          orderId: pedido._id,
+          metodo,
+        }),
+      })
+
+      try {
+        await printComandaInCurrentPage(pedido)
+      } catch {
+        setErrorMessage('No se pudo abrir la impresion interna. Verifica permisos del navegador.')
+        return
+      }
+
+      showNotice(`Comanda impresa para ${pedido.mesa}.`)
+      await fetchOrders(true)
+    } catch (error) {
+      setErrorMessage(error.message || 'No se pudo imprimir la comanda.')
+    }
+  }
+
+  const maybePrintComandaBeforePayment = async (orderLookup, metodo) => {
+    if (!imprimirComandaAlCobrar) {
+      return
+    }
+
+    if (orderLookup?.order?.comanda_impresa_at) {
+      return
+    }
+
+    if (orderLookup?.order?.soloBebidaSinComanda) {
+      return
+    }
+
+    await requestCentral('/api/kitchen/comandas/print', {
+      method: 'POST',
+      body: JSON.stringify({
+        orderId: orderLookup.order._id,
+        metodo,
+      }),
+    })
+
+    const pedidoParaImprimir = normalizePedido(orderLookup.order)
+
+    try {
+      await printComandaInCurrentPage(pedidoParaImprimir)
+    } catch {
+      setErrorMessage('No se pudo abrir la impresion interna. Verifica permisos del navegador.')
     }
   }
 
@@ -996,14 +1207,6 @@ export default function App() {
         <div className="dashboard-shell">
           <aside className="sidebar-column">
           <article className="card payment-card sticky-card luxury-sidebar-glass luxury-hover-surface">
-            <div className="section-heading compact-heading">
-              <div>
-                <p className="section-kicker">Sidebar de cobro</p>
-                <h2>Registrar Pago</h2>
-              </div>
-              <span className="mini-chip">Caja React</span>
-            </div>
-
             <form className="stack compact-form" onSubmit={handlePayOrder}>
               <label>
                 <span>Metodo</span>
@@ -1038,6 +1241,14 @@ export default function App() {
               <p className="form-helper">Pendiente por cobrar: {formatMoney(pendingAmount)}</p>
               <p className="form-helper">Mesa seleccionada: {formatMesaSelectionLabel(selectedMesa)}</p>
               <p className="form-helper">Selecciona la mesa desde el boton de cada tarjeta en el monitor.</p>
+              <label className="payment-print-option">
+                <input
+                  type="checkbox"
+                  checked={imprimirComandaAlCobrar}
+                  onChange={(event) => setImprimirComandaAlCobrar(event.target.checked)}
+                />
+                Imprimir comanda
+              </label>
               <p className="form-helper">
                 Equivalente: {Number.isFinite(dailyBcvRate) && dailyBcvRate > 0 ? formatBs(pendingAmount * dailyBcvRate) : 'BS --'} | {Number.isFinite(dailyPesoRate) && dailyPesoRate > 0 ? formatPesos(pendingAmount * dailyPesoRate) : 'COP --'}
               </p>
@@ -1115,13 +1326,53 @@ export default function App() {
                           <p className="pedido-balance-line">Pagado: {formatMoney(pedido.montoPagado)}</p>
                           <p className={`pedido-balance-line ${pedido.restante > 0 ? 'is-pending' : 'is-complete'}`}>Restante: {formatMoney(pedido.restante)}</p>
                         </div>
-                        <button type="button" className="luxury-primary-button" onClick={() => setSelectedMesa(pedido.mesa)}>Seleccionar</button>
+                        <div className="pedido-actions">
+                          <button type="button" className="luxury-primary-button" onClick={() => setSelectedMesa(pedido.mesa)}>Seleccionar</button>
+                          {!pedido.comandaImpresaAt && !pedido.soloBebidaSinComanda ? (
+                            <button type="button" className="secondary" onClick={() => void handlePrintComanda(pedido)}>Imprimir comanda</button>
+                          ) : pedido.soloBebidaSinComanda ? (
+                            <span className="pedido-comanda-printed">Solo cobrar</span>
+                          ) : (
+                            <span className="pedido-comanda-printed">Comanda impresa</span>
+                          )}
+                        </div>
                       </div>
                     </article>
                   )
                 })}
               </div>
             )}
+
+            <section className="pending-comandas-panel" aria-label="Pendientes por pagar con comanda impresa">
+              <div className="section-divider">
+                <span className="section-divider-line"></span>
+                <span className="section-divider-label">Pendientes por pagar</span>
+                <span className="section-divider-line"></span>
+              </div>
+
+              {pendingPrintedOrders.length === 0 ? (
+                <p className="subtitle-inline">No hay comandas impresas con saldo pendiente.</p>
+              ) : (
+                <div className="pending-comandas-list">
+                  {pendingPrintedOrders.map((pedido) => (
+                    <article key={`pendiente-${pedido._id}`} className="pending-comanda-card">
+                      <div>
+                        <p className="mesa-kicker">Mesa</p>
+                        <p className="mesa-value">{pedido.mesa}</p>
+                      </div>
+                      <div>
+                        <p className="pedido-balance-line">Total: {formatMoney(pedido.total)}</p>
+                        <p className="pedido-balance-line">Abono: {formatMoney(pedido.montoPagado)}</p>
+                        <p className="pedido-balance-line is-pending">Pendiente: {formatMoney(pedido.restante)}</p>
+                      </div>
+                      <button type="button" className="luxury-primary-button" onClick={() => setSelectedMesa(pedido.mesa)}>
+                        Cobrar
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </section>
             </article>
           </section>
         </div>
@@ -1179,10 +1430,33 @@ export default function App() {
                   </div>
                 </article>
 
-                <article className="report-kpi-card luxury-hover-surface">
-                  <p className="report-label">Eficiencia</p>
-                  <p className="report-kpi-value">{formatMoney(reportSummary.averageTicket || 0)}</p>
-                  <p className="report-meta">Ticket promedio por orden pagada</p>
+                <article className="report-kpi-card report-kpi-card--tables luxury-hover-surface">
+                  <p className="report-label">Mesoneros</p>
+                  <p className="report-kpi-value">{mesoneroStats.length || 1}</p>
+                  <p className="report-meta">Mesas atendidas por mesonero disponibles en el sistema</p>
+                  <div className="report-top-mesas-list">
+                    {mesoneroStats.length ? mesoneroStats.map((mesonero) => (
+                      <div key={mesonero.usuario || mesonero.nombre} className="report-top-mesa-item">
+                        <div className="report-top-mesa-head">
+                          <strong>{mesonero.nombre}</strong>
+                          <span>{mesonero.mesasAtendidas || 0} mesas</span>
+                        </div>
+                        <div className="report-top-mesa-track">
+                          <span
+                            className="report-top-mesa-fill"
+                            style={{ width: `${Math.max(12, Math.min(100, (Number(mesonero.mesasAtendidas || 0) / Math.max(1, Number(reportSummary.totalTablesUsed || 1))) * 100))}%` }}
+                          ></span>
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="report-top-mesa-item">
+                        <div className="report-top-mesa-head">
+                          <strong>Santiago</strong>
+                          <span>0 mesas</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </article>
 
                 <article className="report-kpi-card luxury-hover-surface">
@@ -1263,6 +1537,7 @@ export default function App() {
                         <th>Monto (USD)</th>
                         <th>Metodo</th>
                         <th>Hora</th>
+                        <th>Mesonero</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1273,10 +1548,11 @@ export default function App() {
                           <td className="report-table-money">{formatMoney(venta.paymentAmount)}</td>
                           <td>{formatReportMethod(venta.paymentMethod)}</td>
                           <td className="report-table-time">{formatReportHour(venta.hora_pago)}</td>
+                          <td>{venta.mesonero_nombre || 'Santiago'}{venta.mesa_atendida ? <span className="report-client-inline"> · {venta.mesa_atendida}</span> : null}</td>
                         </tr>
                       )) : (
                         <tr>
-                          <td colSpan="5" className="report-empty-cell">No hay ventas para reportar en este periodo.</td>
+                          <td colSpan="6" className="report-empty-cell">No hay ventas para reportar en este periodo.</td>
                         </tr>
                       )}
                     </tbody>

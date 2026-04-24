@@ -57,22 +57,27 @@ function formatDateTime(value) {
 }
 
 function normalizeKitchenOrder(order) {
-  const orderId = order?.idPedido || order?._id
+  const comandaId = order?.idComanda || order?._id
+  const orderId = order?.orderId || order?.idPedido || order?._id
   const mesa = order?.numeroMesa || order?.table || order?.mesa
 
-  if (!orderId || !mesa) {
+  if (!comandaId || !orderId || !mesa) {
     return null
   }
 
   return {
+    idComanda: String(comandaId),
     idPedido: String(orderId),
     numeroMesa: String(mesa),
-    status: normalizeStatus(order?.status),
+    status: 'impresa',
+    pago: String(order?.pago || 'EFECTIVO').trim().toUpperCase(),
     clienteNombre: String(order?.clienteNombre || order?.cliente_nombre || '').trim(),
     mesoneroUsuario: String(order?.mesoneroUsuario || order?.mesonero_usuario || '').trim(),
     createdAt: order?.createdAt || null,
-    preparedAt: order?.preparedAt || null,
-    horaPago: order?.horaPago || order?.hora_pago || null,
+    preparedAt: null,
+    horaPago: null,
+    abono: Number(order?.abono || 0),
+    total: Number(order?.total || 0),
     items: Array.isArray(order.items)
       ? order.items
           .map((item) => ({
@@ -128,7 +133,8 @@ export default function Cocina({ authToken, session, onLogout }) {
             const leftDate = new Date(left.createdAt || 0).getTime()
             const rightDate = new Date(right.createdAt || 0).getTime()
             return rightDate - leftDate
-          }),
+          })
+          .slice(0, 50),
       )
 
       setLastSyncLabel(
@@ -173,12 +179,7 @@ export default function Cocina({ authToken, session, onLogout }) {
       )
     }
 
-    restoSocket.on('ACTUALIZACION_GLOBAL', refreshFromRealtime)
-    restoSocket.on('PEDIDO_GLOBAL', refreshFromRealtime)
-    restoSocket.on('PEDIDO_COCINA', refreshFromRealtime)
-    restoSocket.on('kitchen_order_removed', refreshFromRealtime)
-    restoSocket.on('orden_actualizada', refreshFromRealtime)
-    restoSocket.on('pedido_entregado', refreshFromRealtime)
+    restoSocket.on('comanda_impresa', refreshFromRealtime)
     restoSocket.on('connect_error', handleConnectError)
 
     if (!restoSocket.connected) {
@@ -189,12 +190,7 @@ export default function Cocina({ authToken, session, onLogout }) {
     }
 
     return () => {
-      restoSocket.off('ACTUALIZACION_GLOBAL', refreshFromRealtime)
-      restoSocket.off('PEDIDO_GLOBAL', refreshFromRealtime)
-      restoSocket.off('PEDIDO_COCINA', refreshFromRealtime)
-      restoSocket.off('kitchen_order_removed', refreshFromRealtime)
-      restoSocket.off('orden_actualizada', refreshFromRealtime)
-      restoSocket.off('pedido_entregado', refreshFromRealtime)
+      restoSocket.off('comanda_impresa', refreshFromRealtime)
       restoSocket.off('connect_error', handleConnectError)
     }
   }, [authToken])
@@ -211,7 +207,7 @@ export default function Cocina({ authToken, session, onLogout }) {
               Historial cocina
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-metallicMuted">
-              Comandas principales registradas en tiempo real. Socket: {SOCKET_URL}
+              Historial de comandas impresas desde caja. Se muestran las ultimas 50.
             </p>
           </div>
 
@@ -286,7 +282,7 @@ export default function Cocina({ authToken, session, onLogout }) {
 
               return (
                 <article
-                  key={order.idPedido}
+                  key={order.idComanda}
                   className="luxury-glass luxury-kitchen-card luxury-hover-lift flex min-h-[18rem] flex-col rounded-[22px] p-3 shadow-glow"
                 >
                   <div className="border-b border-resto-cyan/30 pb-3">
@@ -295,7 +291,7 @@ export default function Cocina({ authToken, session, onLogout }) {
                         Mesa
                       </p>
                       <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] ${statusMeta.badgeClass}`}>
-                        {statusMeta.label}
+                        Impresa
                       </span>
                     </div>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-metallicMuted">
@@ -305,7 +301,7 @@ export default function Cocina({ authToken, session, onLogout }) {
                       {order.numeroMesa}
                     </h2>
                     <p className="mt-2 text-xs text-metallicMuted">
-                      {order.clienteNombre || 'Cliente sin nombre'} · Mesonero: {order.mesoneroUsuario || 'N/D'}
+                      Pago: {order.pago || 'EFECTIVO'}
                     </p>
                   </div>
 
@@ -325,10 +321,11 @@ export default function Cocina({ authToken, session, onLogout }) {
                   </ul>
 
                   <div className="mt-3 space-y-1.5 rounded-2xl border border-resto-cyan/20 bg-resto-panel px-3 py-3 text-xs text-metallicMuted">
-                    <p>Creada: {formatDateTime(order.createdAt)}</p>
-                    <p>Entregada: {formatDateTime(order.preparedAt)}</p>
-                    <p>Pagada: {formatDateTime(order.horaPago)}</p>
-                    <p>ID: {order.idPedido}</p>
+                    <p>Fecha: {formatDateTime(order.createdAt)}</p>
+                    <p>Abono: ${Number(order.abono || 0).toFixed(2)}</p>
+                    <p>Total: ${Number(order.total || 0).toFixed(2)}</p>
+                    <p>ID Pedido: {order.idPedido}</p>
+                    <p>ID Comanda: {order.idComanda}</p>
                   </div>
                 </article>
               )

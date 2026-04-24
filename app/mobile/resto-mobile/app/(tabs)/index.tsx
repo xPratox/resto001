@@ -11,6 +11,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -224,6 +225,7 @@ function resetOrderState(
 export default function HomeScreen() {
   const { theme: brand, isDark, toggleTheme } = useMobileTheme();
   const styles = useMemo(() => createStyles(brand), [brand]);
+  const { width: windowWidth } = useWindowDimensions();
   const { session, logout } = useMobileAuth();
   const router = useRouter();
   const params = useLocalSearchParams<{
@@ -565,6 +567,8 @@ export default function HomeScreen() {
 
     return Array.from(grouped.values());
   }, [combinedOrderItems]);
+
+  const shouldStackItemControls = windowWidth <= 390;
   const displayedTotal = useMemo(
     () => (currentOrder._id ? currentOrder.total + pendingItemsTotal : currentOrder.total),
     [currentOrder._id, currentOrder.total, pendingItemsTotal],
@@ -1088,7 +1092,8 @@ export default function HomeScreen() {
                 const selected = currentOrder.table === table.table;
                 const occupied = Boolean(table.occupied);
                 const isCleaning = table.status === 'limpieza';
-                const statusLabel = isCleaning ? 'Limpieza' : occupied ? 'Ocupada' : 'Disponible';
+                const isPendingPayment = table.status === 'pendiente';
+                const statusLabel = isCleaning ? 'Limpieza' : isPendingPayment ? 'Pendiente pago' : occupied ? 'Ocupada' : 'Disponible';
 
                 return (
                   <Pressable
@@ -1097,14 +1102,18 @@ export default function HomeScreen() {
                     style={[
                       styles.giantButton,
                       table.highlighted && styles.giantButtonLarge,
-                      isCleaning ? styles.giantButtonCleaning : occupied && styles.giantButtonOccupied,
+                      isCleaning
+                        ? styles.giantButtonCleaning
+                        : isPendingPayment
+                          ? styles.giantButtonPendingPayment
+                          : occupied && styles.giantButtonOccupied,
                       selected && !occupied && !isCleaning && styles.giantButtonSelected,
                     ]}>
                     <View style={styles.tableButtonHeader}>
                       <Text style={[styles.tableStatusBadge, (occupied || isCleaning) && styles.tableStatusBadgeOccupied]}>
                         {statusLabel}
                       </Text>
-                      {occupied ? <FontAwesome5 name={isCleaning ? 'broom' : 'user-alt'} size={16} color={brand.text.contrastOnAccent} /> : null}
+                      {occupied ? <FontAwesome5 name={isCleaning ? 'broom' : isPendingPayment ? 'money-bill-wave' : 'user-alt'} size={16} color={brand.text.contrastOnAccent} /> : null}
                     </View>
                     <Text style={[styles.giantButtonLabel, (occupied || isCleaning) && styles.giantButtonLabelOccupied]}>
                       {table.table}
@@ -1112,6 +1121,8 @@ export default function HomeScreen() {
                     <Text style={[styles.giantButtonMeta, (occupied || isCleaning) && styles.giantButtonMetaOccupied]}>
                       {isCleaning
                         ? 'Cuenta cobrada. Esperando liberacion manual.'
+                        : isPendingPayment
+                          ? 'Comanda impresa. Falta pago en caja.'
                         : occupied
                           ? table.cliente_nombre || 'Cliente sin nombre'
                         : `${table.capacity} personas${table.highlighted ? ' · mesa destacada' : ''}`}
@@ -1205,7 +1216,7 @@ export default function HomeScreen() {
                   <View style={styles.orderItemCopy}>
                     <View style={styles.orderItemHeader}>
                       <Text style={styles.orderItemName}>{group.quantity} x {group.item.name}</Text>
-                      <View style={styles.itemQtyControls}>
+                      <View style={[styles.itemQtyControls, shouldStackItemControls && styles.itemQtyControlsStacked]}>
                         <Pressable
                           onPress={() => handleRemoveItem(group.firstIndex, group.quantity === 1)}
                           disabled={!canRemoveItems || group.quantity <= 0}
@@ -1619,6 +1630,10 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
     backgroundColor: brand.status.warning,
     borderColor: brand.status.warning,
   },
+  giantButtonPendingPayment: {
+    backgroundColor: brand.status.success,
+    borderColor: brand.status.success,
+  },
   giantButtonSelected: {
     borderColor: brand.accent.primary,
   },
@@ -1804,9 +1819,11 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
     gap: 10,
   },
   orderItemName: {
+    flexShrink: 1,
     color: brand.text.primary,
     fontWeight: '700',
     fontSize: 16,
@@ -1828,7 +1845,13 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
   itemQtyControls: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginLeft: 'auto',
     gap: 8,
+  },
+  itemQtyControlsStacked: {
+    width: '100%',
+    justifyContent: 'flex-end',
+    marginTop: 6,
   },
   qtyCircleButton: {
     width: 30,
@@ -1861,6 +1884,7 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
     color: brand.accent.primary,
     fontWeight: '800',
     fontSize: 16,
+    flexShrink: 0,
   },
   totalRow: {
     flexDirection: 'row',

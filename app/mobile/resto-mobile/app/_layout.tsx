@@ -66,8 +66,6 @@ function RootLayoutContent() {
   const isAuthenticated = Boolean(session?.token && normalizedRole);
   const isMesoneroSession = normalizedRole === 'mesonero';
   const isAdminSession = normalizedRole === 'admin';
-  const isCajaSession = normalizedRole === 'caja';
-  const isCocinaSession = normalizedRole === 'cocina';
   const currentRootSegment = String(segments[0] || '');
 
   const roleHomePath = useMemo(() => {
@@ -79,16 +77,8 @@ function RootLayoutContent() {
       return '/(admin)';
     }
 
-    if (isCajaSession) {
-      return '/(caja)';
-    }
-
-    if (isCocinaSession) {
-      return '/(cocina)';
-    }
-
     return null;
-  }, [isAdminSession, isCajaSession, isCocinaSession, isMesoneroSession]);
+  }, [isAdminSession, isMesoneroSession]);
 
   const isRouteAllowedForRole = useMemo(() => {
     if (!isAuthenticated) {
@@ -103,16 +93,8 @@ function RootLayoutContent() {
       return currentRootSegment === '(admin)';
     }
 
-    if (isCajaSession) {
-      return currentRootSegment === '(caja)';
-    }
-
-    if (isCocinaSession) {
-      return currentRootSegment === '(cocina)';
-    }
-
     return false;
-  }, [currentRootSegment, isAdminSession, isAuthenticated, isCajaSession, isCocinaSession, isMesoneroSession]);
+  }, [currentRootSegment, isAdminSession, isAuthenticated, isMesoneroSession]);
 
   useEffect(() => {
     const defaultTextStyle = { fontFamily: Fonts?.sans, fontWeight: '500' as const };
@@ -198,6 +180,10 @@ function RootLayoutContent() {
         throw new Error('El backend no devolvio una sesion valida.');
       }
 
+      if (rol !== 'admin' && rol !== 'mesonero') {
+        throw new Error('Demo móvil habilitada solo para roles admin y mesonero.');
+      }
+
       setIsAuthClientsReady(false);
       setSession({
         token,
@@ -278,7 +264,7 @@ function RootLayoutContent() {
     );
   }
 
-  if (!isMesoneroSession && !isAdminSession && !isCajaSession && !isCocinaSession) {
+  if (!isMesoneroSession && !isAdminSession) {
     return (
       <MobileAuthContext.Provider value={{ session, logout: handleLogout }}>
         <SafeAreaView style={styles.authScreen}>
@@ -291,7 +277,7 @@ function RootLayoutContent() {
             </View>
             <Text style={styles.authEyebrow}>ROL DETECTADO</Text>
             <Text style={styles.authTitle}>{session?.nombre || session?.usuario || 'Usuario'}</Text>
-            <Text style={styles.authSubtitle}>La sesión se autenticó correctamente, pero el módulo móvil para el rol {normalizedRole || 'desconocido'} todavía no está disponible.</Text>
+            <Text style={styles.authSubtitle}>La sesión se autenticó correctamente, pero esta demo móvil solo permite roles admin y mesonero. Rol detectado: {normalizedRole || 'desconocido'}.</Text>
             <Pressable style={styles.secondaryButton} onPress={handleLogout}>
               <Text style={styles.secondaryButtonText}>Cerrar sesión</Text>
             </Pressable>
@@ -314,8 +300,6 @@ function RootLayoutContent() {
           {isMesoneroSession ? <Stack.Screen name="Tables" options={{ headerShown: false }} /> : null}
           {isMesoneroSession ? <Stack.Screen name="active-order" options={{ headerShown: false }} /> : null}
           {isAdminSession ? <Stack.Screen name="(admin)" options={{ headerShown: false }} /> : null}
-          {isCajaSession ? <Stack.Screen name="(caja)" options={{ headerShown: false }} /> : null}
-          {isCocinaSession ? <Stack.Screen name="(cocina)" options={{ headerShown: false }} /> : null}
         </Stack>
         <StatusBar style={isDark ? 'light' : 'dark'} />
       </ThemeProvider>
