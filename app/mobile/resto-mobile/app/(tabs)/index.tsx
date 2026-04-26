@@ -4,7 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
   ActivityIndicator,
+  Animated,
   Alert,
+  Easing,
   Modal,
   Pressable,
   ScrollView,
@@ -15,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import * as Haptics from 'expo-haptics';
 
 import { Fonts, type MobileBrandTheme } from '@/constants/theme';
 import { useMobileAuth } from '@/lib/auth-session';
@@ -26,7 +29,7 @@ type MenuItem = {
   id: string;
   name: string;
   price: number;
-  category: 'Bebidas' | 'Platos';
+  category: string;
 };
 
 type OrderItem = {
@@ -86,6 +89,57 @@ type DailyExchangeRateResponse = {
   rate: number | null;
 };
 
+type GroupedMenu = Record<string, MenuItem[]>;
+type ItemQuantityMap = Record<string, number>;
+
+const LUXE_MENU_ITEMS: MenuItem[] = [
+  { id: 'picoteo-los-weyes', name: 'Los Weyes', price: 10, category: 'PICOTEO' },
+  { id: 'picoteo-la-limena', name: 'La Limeña', price: 14, category: 'PICOTEO' },
+  { id: 'picoteo-la-acevichada', name: 'La Acevichada', price: 15, category: 'PICOTEO' },
+  { id: 'picoteo-el-travieso', name: 'El Travieso', price: 17, category: 'PICOTEO' },
+  { id: 'picoteo-ponja', name: 'Ponja', price: 17, category: 'PICOTEO' },
+  { id: 'picoteo-moo', name: 'Moo', price: 16, category: 'PICOTEO' },
+  { id: 'picoteo-ali-baba', name: 'Ali Baba', price: 8, category: 'PICOTEO' },
+  { id: 'picoteo-indiscreta', name: 'Indiscreta', price: 15, category: 'PICOTEO' },
+  { id: 'picoteo-caprichosos', name: 'Caprichosos', price: 6, category: 'PICOTEO' },
+  { id: 'picoteo-3-chiflados', name: '3 Chiflados', price: 6, category: 'PICOTEO' },
+  { id: 'picoteo-las-malcriadas', name: 'Las Malcriadas', price: 6, category: 'PICOTEO' },
+  { id: 'picoteo-bonachones', name: 'Bonachones', price: 9, category: 'PICOTEO' },
+  { id: 'ensaladas-pilatos', name: 'Pilatos', price: 11, category: 'ENSALADAS' },
+  { id: 'ensaladas-atrevida', name: 'Atrevida', price: 13, category: 'ENSALADAS' },
+  { id: 'arroces-melosito', name: 'Melosito', price: 19, category: 'ARROCES' },
+  { id: 'arroces-a-lo-macho', name: 'A lo macho', price: 20, category: 'ARROCES' },
+  { id: 'pastas-popeye', name: 'Popeye', price: 12, category: 'PASTAS' },
+  { id: 'pastas-la-seria', name: 'La Seria', price: 12, category: 'PASTAS' },
+  { id: 'sanguches-flaquita-rica', name: 'Flaquita Rica', price: 11, category: 'HAMBURGUESAS / SANGUCHES' },
+  { id: 'sanguches-miss-cow', name: 'Miss Cow', price: 14, category: 'HAMBURGUESAS / SANGUCHES' },
+  { id: 'sanguches-pollita', name: 'Pollita', price: 12, category: 'HAMBURGUESAS / SANGUCHES' },
+  { id: 'sanguches-mr-pig', name: 'Mr Pig', price: 14, category: 'HAMBURGUESAS / SANGUCHES' },
+  { id: 'sanguches-pitufina', name: 'Pitufina', price: 9.5, category: 'HAMBURGUESAS / SANGUCHES' },
+  { id: 'cafe-espresso', name: 'Espresso', price: 1.5, category: 'CAFÉ' },
+  { id: 'cafe-doppio', name: 'Doppio', price: 2.5, category: 'CAFÉ' },
+  { id: 'cafe-cappuchino', name: 'Cappuchino', price: 2.5, category: 'CAFÉ' },
+  { id: 'cafe-latte', name: 'Latte', price: 2.5, category: 'CAFÉ' },
+  { id: 'cafe-mocca', name: 'Mocca', price: 3.5, category: 'CAFÉ' },
+  { id: 'cafe-pitufimalteada', name: 'Pitufimalteada', price: 6, category: 'CAFÉ' },
+  { id: 'cafe-oreo', name: 'Oreo', price: 7, category: 'CAFÉ' },
+  { id: 'cafe-goloso', name: 'Goloso', price: 6, category: 'CAFÉ' },
+  { id: 'cafe-ice-coffe', name: 'Ice Coffe', price: 3.5, category: 'CAFÉ' },
+  { id: 'bebidas-frappes', name: 'Frappes', price: 4, category: 'BEBIDAS' },
+  { id: 'bebidas-nestea', name: 'Nestea', price: 2, category: 'BEBIDAS' },
+  { id: 'bebidas-refresco', name: 'Refresco', price: 2, category: 'BEBIDAS' },
+  { id: 'bebidas-agua', name: 'Agua', price: 2, category: 'BEBIDAS' },
+  { id: 'bebidas-cerveza', name: 'Cerveza', price: 1.5, category: 'BEBIDAS' },
+  { id: 'cocteles-tinto-resto', name: 'Tinto Resto', price: 7, category: 'COCTELES' },
+  { id: 'cocteles-peter', name: 'Peter', price: 7, category: 'COCTELES' },
+  { id: 'cocteles-maria-luisa', name: 'Maria Luisa', price: 6, category: 'COCTELES' },
+  { id: 'cocteles-fuera-del-resto', name: 'Fuera del Resto', price: 8, category: 'COCTELES' },
+  { id: 'cocteles-candy-crush', name: 'Candy Crush', price: 6, category: 'COCTELES' },
+  { id: 'cocteles-911', name: '911', price: 4, category: 'COCTELES' },
+  { id: 'cocteles-mojito', name: 'Mojito', price: 5, category: 'COCTELES' },
+  { id: 'cocteles-margarita', name: 'Margarita', price: 7, category: 'COCTELES' },
+];
+
 type NormalizedOrderStatus = CurrentOrder['status'];
 type NormalizedTableStatus = TableStatus['status'];
 
@@ -102,10 +156,12 @@ const TABLE_DEFINITIONS: TableDefinition[] = [
   { table: 'Mesa 10', section: 'Terraza', capacity: 4 },
   { table: 'Mesa 11', section: 'Terraza', capacity: 4 },
 ];
-const QUICK_NOTES = {
-  Bebidas: ['Sin hielo', 'Poca azucar', 'Vaso aparte'],
-  Platos: ['Con todo', 'Sin verduras', 'Extra queso'],
-} as const;
+const QUICK_NOTES_BY_CATEGORY: Record<string, string[]> = {
+  BEBIDAS: ['Sin hielo', 'Poca azucar', 'Vaso aparte'],
+  CAFÉ: ['Sin azucar', 'Leche aparte', 'Doble carga'],
+  COCTELES: ['Sin alcohol', 'Menos hielo', 'Mas limon'],
+  DEFAULT: ['Sin cebolla', 'Sin picante', 'Para llevar'],
+};
 
 const initialOrder: CurrentOrder = {
   table: '',
@@ -115,6 +171,92 @@ const initialOrder: CurrentOrder = {
   total: 0,
   status: 'pendiente',
 };
+
+function MenuSectionAccordion({
+  tituloCategoria,
+  itemsList,
+  quantityByItemKey,
+  onSelectItem,
+  styles,
+  brand,
+}: {
+  tituloCategoria: string;
+  itemsList: MenuItem[];
+  quantityByItemKey: ItemQuantityMap;
+  onSelectItem: (item: MenuItem) => void;
+  styles: ReturnType<typeof createStyles>;
+  brand: MobileBrandTheme;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <View style={styles.menuAccordionCard}>
+      <Pressable onPress={() => setIsOpen((current) => !current)} style={styles.menuAccordionHeader}>
+        <Text style={styles.menuAccordionTitle}>{tituloCategoria.toUpperCase()}</Text>
+        <FontAwesome5
+          name="chevron-down"
+          size={16}
+          color={isOpen ? brand.accent.sunsetOrange : brand.text.metallicLight}
+          style={isOpen ? styles.menuAccordionIconOpen : styles.menuAccordionIcon}
+        />
+      </Pressable>
+
+      {isOpen ? (
+        <View style={styles.menuAccordionBody}>
+          {itemsList.map((item) => {
+            const quantity = quantityByItemKey[getMenuItemQuantityKey(item)] || 0;
+
+            return (
+              <MenuItemCard
+                key={item.id}
+                item={item}
+                tituloCategoria={tituloCategoria}
+                quantity={quantity}
+                onSelectItem={onSelectItem}
+                styles={styles}
+              />
+            );
+          })}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function MenuItemCard({
+  item,
+  tituloCategoria,
+  quantity,
+  onSelectItem,
+  styles,
+}: {
+  item: MenuItem;
+  tituloCategoria: string;
+  quantity: number;
+  onSelectItem: (item: MenuItem) => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  return (
+    <Pressable
+      onPress={() => onSelectItem(item)}
+      style={[styles.menuCard, quantity > 0 && styles.menuCardActive]}>
+      {quantity > 0 ? (
+        <View style={styles.menuQuantityBadge}>
+          <Text style={styles.menuQuantityBadgeText}>{quantity}x</Text>
+        </View>
+      ) : null}
+      <View style={styles.menuCopy}>
+        <Text style={styles.menuName}>{item.name}</Text>
+        <Text style={styles.menuCategory}>{tituloCategoria}</Text>
+      </View>
+      <Text style={styles.menuPrice}>${item.price.toFixed(2)}</Text>
+    </Pressable>
+  );
+}
+
+function getMenuItemQuantityKey(item: Pick<MenuItem, 'name' | 'price'> | Pick<OrderItem, 'name' | 'price'>) {
+  return `${item.name}::${item.price}`;
+}
 
 function normalizeOrderStatus(status: unknown): NormalizedOrderStatus {
   if (status === 'limpieza' || status === 'pagado' || status === 'pendiente') {
@@ -159,12 +301,7 @@ function normalizeOrder(order: CurrentOrder): CurrentOrder {
 
 function normalizeMenuItem(item: BackendMenuItem, index: number): MenuItem | null {
   const name = typeof item.name === 'string' ? item.name : typeof item.nombre === 'string' ? item.nombre : '';
-  const category =
-    item.category === 'Bebidas' || item.category === 'Platos'
-      ? item.category
-      : item.categoria === 'Bebidas' || item.categoria === 'Platos'
-        ? item.categoria
-        : 'Platos';
+  const category = String(item.category || item.categoria || 'MENU').trim().toUpperCase() || 'MENU';
 
   if (!name) {
     return null;
@@ -236,7 +373,7 @@ export default function HomeScreen() {
     orderUpdatedSuccess?: string;
   }>();
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>([]);
+  const [menuItems, setMenuItems] = useState<MenuItem[]>(LUXE_MENU_ITEMS);
   const [isLoadingMenu, setIsLoadingMenu] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [currentOrder, setCurrentOrder] = useState<CurrentOrder>(initialOrder);
@@ -312,8 +449,8 @@ export default function HomeScreen() {
     [],
   );
 
-  const groupedMenuItems = useMemo(() => {
-    return menuItems.reduce<Record<string, MenuItem[]>>((groups, item) => {
+  const groupedMenuItems = useMemo<GroupedMenu>(() => {
+    return menuItems.reduce<GroupedMenu>((groups, item) => {
       if (!groups[item.category]) {
         groups[item.category] = [];
       }
@@ -336,7 +473,10 @@ export default function HomeScreen() {
     });
   }, [activeSection, tableStatuses]);
 
-  const quickNotesForSelectedItem = selectedPlate ? QUICK_NOTES[selectedPlate.category] : QUICK_NOTES.Platos;
+  const quickNotesForSelectedItem = useMemo(() => {
+    const categoryKey = String(selectedPlate?.category || 'DEFAULT').toUpperCase();
+    return QUICK_NOTES_BY_CATEGORY[categoryKey] || QUICK_NOTES_BY_CATEGORY.DEFAULT;
+  }, [selectedPlate]);
 
   const fetchMenu = useCallback(async () => {
     setIsLoadingMenu(true);
@@ -349,9 +489,9 @@ export default function HomeScreen() {
         ? response.data.items
             .map((item, index) => normalizeMenuItem(item, index))
             .filter((item): item is MenuItem => item !== null)
-        : [];
+        : LUXE_MENU_ITEMS;
 
-      setMenuItems(normalizedItems);
+      setMenuItems(normalizedItems.length > 0 ? normalizedItems : LUXE_MENU_ITEMS);
     } catch (error) {
       const message = isAxiosError(error) ? error.response?.data?.message || error.message : 'Error desconocido cargando menu';
 
@@ -360,8 +500,8 @@ export default function HomeScreen() {
         message,
         status: isAxiosError(error) ? error.response?.status : null,
       });
-      Alert.alert('Error cargando menu', message);
-      setErrorMessage(`No se pudo cargar el menu. ${message}`);
+      setMenuItems(LUXE_MENU_ITEMS);
+      setErrorMessage(`No se pudo sincronizar el menu remoto. Mostrando menu local.`);
     } finally {
       setIsLoadingMenu(false);
     }
@@ -573,6 +713,13 @@ export default function HomeScreen() {
     () => (currentOrder._id ? currentOrder.total + pendingItemsTotal : currentOrder.total),
     [currentOrder._id, currentOrder.total, pendingItemsTotal],
   );
+  const quantityByItemKey = useMemo<ItemQuantityMap>(() => {
+    return combinedOrderItems.reduce<ItemQuantityMap>((accumulator, item) => {
+      const key = getMenuItemQuantityKey(item);
+      accumulator[key] = (accumulator[key] || 0) + 1;
+      return accumulator;
+    }, {});
+  }, [combinedOrderItems]);
   const displayedTotalInBs = useMemo(
     () => (dailyBcvRate ? displayedTotal * dailyBcvRate : null),
     [dailyBcvRate, displayedTotal],
@@ -584,6 +731,64 @@ export default function HomeScreen() {
   const totalItems = useMemo(() => combinedOrderItems.length, [combinedOrderItems]);
   const canRemoveItems = !currentOrder._id || currentOrder.status === 'pendiente';
   const canAddItemsToOrder = currentOrder.status !== 'pagado' && currentOrder.status !== 'limpieza';
+  const bottomBarGlowAnim = useRef(new Animated.Value(0)).current;
+  const itemsPopAnim = useRef(new Animated.Value(1)).current;
+  const hasAnimatedTotalRef = useRef(false);
+  const hasAnimatedItemsRef = useRef(false);
+  const glowOpacity = bottomBarGlowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, 0.55],
+  });
+  const glowTranslateY = bottomBarGlowAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [8, 0],
+  });
+
+  useEffect(() => {
+    if (!hasAnimatedTotalRef.current) {
+      hasAnimatedTotalRef.current = true;
+      return;
+    }
+
+    bottomBarGlowAnim.setValue(0);
+    Animated.sequence([
+      Animated.timing(bottomBarGlowAnim, {
+        toValue: 1,
+        duration: 160,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(bottomBarGlowAnim, {
+        toValue: 0,
+        duration: 240,
+        easing: Easing.inOut(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [bottomBarGlowAnim, displayedTotal]);
+
+  useEffect(() => {
+    if (!hasAnimatedItemsRef.current) {
+      hasAnimatedItemsRef.current = true;
+      return;
+    }
+
+    itemsPopAnim.setValue(1);
+    Animated.sequence([
+      Animated.timing(itemsPopAnim, {
+        toValue: 1.08,
+        duration: 110,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(itemsPopAnim, {
+        toValue: 1,
+        duration: 140,
+        easing: Easing.inOut(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [itemsPopAnim, totalItems]);
 
   useEffect(() => {
     if (!selectedCleaningTable) {
@@ -738,15 +943,39 @@ export default function HomeScreen() {
     }
   }, [fetchTableStatuses, lockTableAsAvailable, selectedCleaningTable, tableStatuses]);
 
-  const handleOpenNotes = (item: MenuItem) => {
-    setErrorMessage('');
-    setSuccessMessage('');
-    setSelectedPlate(item);
-    setNote('');
-    setSelectedQuantity(1);
-    setIsNotesModalVisible(true);
-    setStep(3);
-  };
+  const addToOrder = useCallback((item: MenuItem) => {
+    if (!canAddItemsToOrder) {
+      return;
+    }
+
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const nextItem: OrderItem = {
+      name: item.name,
+      price: item.price,
+      note: 'Sin notas',
+    };
+
+    if (currentOrder._id) {
+      setPendingItemsToAdd((previous) => [...previous, nextItem]);
+      setSuccessMessage(`${item.name} agregado para actualizar el pedido.`);
+      return;
+    }
+
+    const nextItems = [...currentOrder.items, nextItem];
+    const total = nextItems.reduce((sum, candidate) => sum + candidate.price, 0);
+
+    setCurrentOrder({
+      table: currentOrder.table,
+      cliente_nombre: currentOrder.cliente_nombre,
+      seccion: currentOrder.seccion,
+      items: nextItems,
+      total,
+      status: 'pendiente',
+    });
+
+    setSuccessMessage(`${item.name} agregado al pedido.`);
+  }, [canAddItemsToOrder, currentOrder, setPendingItemsToAdd]);
 
   const handleAddItem = async () => {
     if (!selectedPlate) {
@@ -1140,7 +1369,7 @@ export default function HomeScreen() {
             <View style={styles.sectionHeaderRow}>
               <View style={styles.sectionHeaderCopy}>
                 <Text style={styles.sectionTitle}>2. Menu de bebidas y platos</Text>
-                <Text style={styles.sectionText}>Toca cualquier item para abrir el paso 3 de notas.</Text>
+                <Text style={styles.sectionText}>Toca cualquier item para sumarlo al pedido en el instante.</Text>
               </View>
               <Pressable onPress={() => setStep(1)} style={[styles.secondaryChip, styles.secondaryChipMenuBack]}>
                 <Text style={styles.secondaryChipText}>Cambiar mesa</Text>
@@ -1154,40 +1383,38 @@ export default function HomeScreen() {
               </View>
             ) : (
               <View style={styles.menuList}>
-                {['Bebidas', 'Platos'].map((category) => {
-                  const items = groupedMenuItems[category] ?? [];
-
-                  if (items.length === 0) {
-                    return null;
-                  }
-
-                  return (
-                    <View key={category} style={styles.menuSection}>
-                      <Text style={styles.menuSectionTitle}>{category}</Text>
-                      {items.map((item) => (
-                        <Pressable
-                          key={item.id}
-                          onPress={() => handleOpenNotes(item)}
-                          style={styles.menuCard}>
-                          <View style={styles.menuCopy}>
-                            <Text style={styles.menuName}>{item.name}</Text>
-                            <Text style={styles.menuCategory}>{item.category}</Text>
-                          </View>
-                          <Text style={styles.menuPrice}>${item.price.toFixed(2)}</Text>
-                        </Pressable>
-                      ))}
-                    </View>
-                  );
-                })}
+                {Object.keys(groupedMenuItems).map((category) => (
+                  <MenuSectionAccordion
+                    key={category}
+                    tituloCategoria={category}
+                    itemsList={groupedMenuItems[category] ?? []}
+                    quantityByItemKey={quantityByItemKey}
+                    onSelectItem={addToOrder}
+                    styles={styles}
+                    brand={brand}
+                  />
+                ))}
               </View>
             )}
 
-            <View style={styles.orderCard}>
+            <Animated.View style={styles.orderCard}>
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  styles.bottomBarGlow,
+                  {
+                    opacity: glowOpacity,
+                    transform: [{ translateY: glowTranslateY }],
+                  },
+                ]}
+              />
               <Text style={styles.orderTitle}>Pedido actual</Text>
               <Text style={styles.orderMeta}>{currentOrder.table || 'Mesa pendiente'}</Text>
               <Text style={styles.orderMeta}>{currentOrder.seccion || 'Sala'}</Text>
               {currentOrder.cliente_nombre ? <Text style={styles.orderMeta}>Reserva: {currentOrder.cliente_nombre}</Text> : null}
-              <Text style={styles.orderMeta}>{totalItems} platos agregados</Text>
+              <Animated.Text style={[styles.orderMeta, styles.orderMetaCount, { transform: [{ scale: itemsPopAnim }] }]}> 
+                {totalItems} platos agregados
+              </Animated.Text>
 
               {currentOrder._id && canAddItemsToOrder ? (
                 <Pressable onPress={() => setStep(2)} style={styles.addMoreButton}>
@@ -1265,7 +1492,7 @@ export default function HomeScreen() {
                   {isSubmitting ? 'Enviando pedido...' : currentOrder._id ? 'Actualizar Pedido' : 'Confirmar'}
                 </Text>
               </Pressable>
-            </View>
+            </Animated.View>
           </View>
         ) : null}
 
@@ -1428,7 +1655,7 @@ export default function HomeScreen() {
 const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: brand.background.deepCarbon,
+    backgroundColor: '#0A0A0A',
   },
   content: {
     padding: 20,
@@ -1712,6 +1939,40 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
   menuList: {
     gap: 12,
   },
+  menuAccordionCard: {
+    borderRadius: 20,
+    backgroundColor: '#0A0A0A',
+    borderWidth: 1,
+    borderColor: '#1A1A1A',
+    overflow: 'hidden',
+  },
+  menuAccordionHeader: {
+    minHeight: 58,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0A0A0A',
+  },
+  menuAccordionTitle: {
+    color: '#BF953F',
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 1.2,
+    fontFamily: Fonts?.serif,
+  },
+  menuAccordionIcon: {
+    transform: [{ rotate: '0deg' }],
+  },
+  menuAccordionIconOpen: {
+    transform: [{ rotate: '180deg' }],
+  },
+  menuAccordionBody: {
+    gap: 10,
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+  },
   menuSection: {
     gap: 10,
   },
@@ -1724,14 +1985,34 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
   menuCard: {
     minHeight: 86,
     borderRadius: 16,
-    backgroundColor: brand.background.deepCarbon,
-    borderWidth: StyleSheet.hairlineWidth,
-    borderColor: brand.border.subtle,
+    backgroundColor: '#0A0A0A',
+    borderWidth: 1,
+    borderColor: '#1A1A1A',
     paddingHorizontal: 18,
     paddingVertical: 16,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    position: 'relative',
+  },
+  menuCardActive: {
+    borderColor: '#BF953F',
+    borderWidth: 1.5,
+  },
+  menuQuantityBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 10,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 8,
+    backgroundColor: 'rgba(10,10,10,0.95)',
+  },
+  menuQuantityBadgeText: {
+    color: '#BF953F',
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: Fonts?.serif,
   },
   menuCopy: {
     flex: 1,
@@ -1750,9 +2031,9 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
     fontWeight: '600',
   },
   menuPrice: {
-    color: brand.accent.primary,
-    fontSize: 18,
-    fontWeight: '800',
+    color: '#D7D7D7',
+    fontSize: 17,
+    fontWeight: '400',
   },
   orderCard: {
     marginTop: 8,
@@ -1762,6 +2043,17 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
     gap: 12,
     borderWidth: StyleSheet.hairlineWidth,
     borderColor: brand.border.subtle,
+    position: 'relative',
+    overflow: 'visible',
+  },
+  bottomBarGlow: {
+    position: 'absolute',
+    top: -10,
+    left: 14,
+    right: 14,
+    height: 24,
+    borderRadius: 20,
+    backgroundColor: '#BF953F',
   },
   orderTitle: {
     color: brand.text.primary,
@@ -1802,6 +2094,9 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
   orderMeta: {
     color: brand.text.secondary,
     fontSize: 14,
+  },
+  orderMetaCount: {
+    color: '#D7D7D7',
   },
   orderItemRow: {
     flexDirection: 'row',

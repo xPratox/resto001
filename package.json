@@ -28,5 +28,12 @@
     "docker:prod:up": "docker compose -p resto001-prod --env-file .env.docker.prod -f infra/docker/docker-compose.prod.yml up --build",
     "docker:prod:down": "docker compose -p resto001-prod --env-file .env.docker.prod -f infra/docker/docker-compose.prod.yml down",
     "docker:smoke": "bash ./infra/scripts/docker-smoke-test.sh"
+  },
+  "dependencies": {
+    "expo": "^55.0.17"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.10",
+    "typescript": "~5.9.2"
   }
 }

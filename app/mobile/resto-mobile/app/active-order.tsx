@@ -41,6 +41,8 @@ type BackendMenuItem = Partial<MenuItem> & {
   categoria?: string;
 };
 
+type GroupedMenu = Record<string, MenuItem[]>;
+
 const QUICK_NOTES = {
   Bebidas: ['Sin hielo', 'Poco azucar', 'Vaso aparte'],
   Platos: ['Sin sal', 'Con todo', 'Extra salsa'],
@@ -119,6 +121,56 @@ function normalizeMenuItem(item: BackendMenuItem, index: number): MenuItem | nul
   };
 }
 
+function MenuSectionAccordion({
+  tituloCategoria,
+  itemsList,
+  onSelectItem,
+  styles,
+  brand,
+}: {
+  tituloCategoria: string;
+  itemsList: MenuItem[];
+  onSelectItem: (item: MenuItem) => void;
+  styles: ReturnType<typeof createStyles>;
+  brand: MobileBrandTheme;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <View style={styles.menuAccordionCard}>
+      <Pressable onPress={() => setIsOpen((current) => !current)} style={styles.menuAccordionHeader}>
+        <Text style={styles.menuAccordionTitle}>{tituloCategoria.toUpperCase()}</Text>
+        <Ionicons
+          name="chevron-down"
+          size={18}
+          color={isOpen ? brand.accent.sunset : brand.text.metallicLight}
+          style={isOpen ? styles.menuAccordionIconOpen : styles.menuAccordionIcon}
+        />
+      </Pressable>
+
+      {isOpen ? (
+        <View style={styles.menuAccordionBody}>
+          {itemsList.map((item) => (
+            <View key={item.id} style={styles.catalogItemCard}>
+              <View style={styles.itemCopy}>
+                <Text style={styles.itemName}>{item.name}</Text>
+                <Text style={styles.itemNote}>{tituloCategoria}</Text>
+              </View>
+
+              <View style={styles.rowActions}>
+                <Text style={styles.itemPrice}>${item.price.toFixed(2)}</Text>
+                <Pressable onPress={() => onSelectItem(item)} style={styles.catalogAddButton}>
+                  <Text style={styles.catalogAddButtonText}>Agregar</Text>
+                </Pressable>
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export default function ActiveOrderScreen() {
   const { theme: brand, isDark, toggleTheme } = useMobileTheme();
   const styles = useMemo(() => createStyles(brand), [brand]);
@@ -166,6 +218,18 @@ export default function ActiveOrderScreen() {
 
     return Array.from(grouped.values());
   }, [tempOrderItems]);
+  const groupedMenu = useMemo<GroupedMenu>(() => {
+    return menuItems.reduce<GroupedMenu>((groups, item) => {
+      const category = String(item.category || 'Menu').trim() || 'Menu';
+
+      if (!groups[category]) {
+        groups[category] = [];
+      }
+
+      groups[category].push(item);
+      return groups;
+    }, {});
+  }, [menuItems]);
 
   const canEditOrder = order?.status !== 'pagado' && order?.status !== 'limpieza';
 
@@ -588,20 +652,15 @@ export default function ActiveOrderScreen() {
               </View>
             ) : (
               <ScrollView contentContainerStyle={styles.modalListContent} showsVerticalScrollIndicator={false}>
-                {menuItems.map((item) => (
-                  <View key={item.id} style={styles.catalogItemCard}>
-                    <View style={styles.itemCopy}>
-                      <Text style={styles.itemName}>{item.name}</Text>
-                      <Text style={styles.itemNote}>{item.category}</Text>
-                    </View>
-
-                    <View style={styles.rowActions}>
-                      <Text style={styles.itemPrice}>${item.price.toFixed(2)}</Text>
-                      <Pressable onPress={() => handleSelectMenuItem(item)} style={styles.catalogAddButton}>
-                        <Text style={styles.catalogAddButtonText}>Agregar</Text>
-                      </Pressable>
-                    </View>
-                  </View>
+                {Object.keys(groupedMenu).map((categoria) => (
+                  <MenuSectionAccordion
+                    key={categoria}
+                    tituloCategoria={categoria}
+                    itemsList={groupedMenu[categoria] ?? []}
+                    onSelectItem={handleSelectMenuItem}
+                    styles={styles}
+                    brand={brand}
+                  />
                 ))}
               </ScrollView>
             )}
@@ -921,6 +980,39 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: 12,
+  },
+  menuAccordionCard: {
+    borderRadius: 18,
+    backgroundColor: brand.background.deepCarbon,
+    borderWidth: 1,
+    borderColor: brand.text.metallicSoft,
+    overflow: 'hidden',
+  },
+  menuAccordionHeader: {
+    minHeight: 60,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: brand.background.deepCarbon,
+  },
+  menuAccordionTitle: {
+    color: brand.accent.sunset,
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 1.4,
+  },
+  menuAccordionIcon: {
+    transform: [{ rotate: '0deg' }],
+  },
+  menuAccordionIconOpen: {
+    transform: [{ rotate: '180deg' }],
+  },
+  menuAccordionBody: {
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    gap: 10,
   },
   catalogAddButton: {
     minHeight: 46,

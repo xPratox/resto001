@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { API_BASE_URL } from '../config/api'
 import { useRestoRealtime } from '../hooks/use-resto-realtime'
+import CategoryAccordion from './CategoryAccordion'
 
 const fallbackMenu = {
   Bebidas: [
@@ -15,10 +16,86 @@ const fallbackMenu = {
 }
 
 const quickNotesByCategory = {
-  Bebidas: ['Sin hielo', 'Poca azucar', 'Vaso aparte'],
-  Platos: ['Con todo', 'Sin verduras', 'Extra queso'],
+  BEBIDAS: ['Sin hielo', 'Poca azucar', 'Vaso aparte'],
+  CALIENTES: ['Sin azucar', 'Leche aparte', 'Doble carga'],
+  'COCTELES DE LA CASA': ['Sin alcohol', 'Menos hielo', 'Mas limon'],
+  default: ['Sin cebolla', 'Sin picante', 'Para llevar'],
 }
 const tables = ['Mesa 1', 'Mesa 2', 'Mesa 3', 'Mesa 4']
+const CAFE_CATEGORIES = ['CALIENTES', 'MALTEADAS Y MERENGADAS', 'FRAPPUCCINOS']
+const MENU_SECTION_ORDER = [
+  'PICOTEO',
+  'ENSALADAS',
+  'ARROCES',
+  'PASTAS',
+  'HAMBURGUESAS Y SANGUCHES',
+  'DE LA BARRA DE CAFE',
+  'BEBIDAS',
+  'COCTELES DE LA CASA',
+]
+
+function getSectionOrderIndex(category) {
+  const normalized = String(category || '').trim().toUpperCase()
+  const index = MENU_SECTION_ORDER.indexOf(normalized)
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index
+}
+
+function mapCategoryToSection(category) {
+  const normalized = String(category || '').trim().toUpperCase()
+  if (CAFE_CATEGORIES.includes(normalized)) {
+    return 'DE LA BARRA DE CAFE'
+  }
+
+  return normalized || 'MENU'
+}
+
+// Agrupar menú por categorías del backend, acordeón
+function buildMenuSections(menuCatalog) {
+  const sectionMap = new Map()
+
+  Object.entries(menuCatalog || {}).forEach(([rawCategory, items]) => {
+    const sectionName = mapCategoryToSection(rawCategory)
+    if (!sectionMap.has(sectionName)) {
+      sectionMap.set(sectionName, [])
+    }
+    const mappedItems = (items || []).map((item) => ({
+      ...item,
+      sourceCategory: String(item?.category || rawCategory || '').trim().toUpperCase(),
+      section: sectionName,
+    }))
+    sectionMap.set(sectionName, [...sectionMap.get(sectionName), ...mappedItems])
+  })
+
+  const sections = Array.from(sectionMap.entries())
+    .map(([name, items]) => ({ name, items }))
+    .sort((left, right) => {
+      const byOrder = getSectionOrderIndex(left.name) - getSectionOrderIndex(right.name)
+      if (byOrder !== 0) {
+        return byOrder
+      }
+      return left.name.localeCompare(right.name)
+    })
+
+  return sections.map((section) => {
+    const sortedItems = [...section.items].sort((left, right) =>
+      String(left.name || '').localeCompare(String(right.name || ''))
+    )
+    return {
+      ...section,
+      items: sortedItems,
+    }
+  })
+}
+
+function getQuickNotesForCategory(category) {
+  const normalized = String(category || '').trim().toUpperCase()
+  return quickNotesByCategory[normalized] || quickNotesByCategory.default
+}
+
+function getDefaultNote(category) {
+  const notes = getQuickNotesForCategory(category)
+  return notes[0] || 'Sin observaciones'
+}
 
 function formatPrice(amount) {
   return `$${amount.toFixed(2)}`
@@ -94,6 +171,27 @@ async function parseJsonResponse(response) {
   return data
 }
 
+function groupMenuItemsByCategory(items) {
+  return (items || []).reduce((accumulator, item) => {
+    const category = String(item?.category || item?.categoria || 'Menu').trim() || 'Menu'
+
+    if (!accumulator[category]) {
+      accumulator[category] = []
+    }
+
+    accumulator[category].push({
+      name: item?.name || item?.nombre,
+      price: Number(item?.price ?? item?.precio ?? 0),
+      type: item?.type || (category.toLowerCase().includes('bebida') ? 'drink' : 'dish'),
+      category,
+      description: item?.description || item?.descripcion || '',
+      _id: item?._id || item?.id,
+    })
+
+    return accumulator
+  }, {})
+}
+
 function normalizeMenuCatalog(payload) {
   if (!payload || typeof payload !== 'object') {
     return fallbackMenu
@@ -107,32 +205,15 @@ function normalizeMenuCatalog(payload) {
     return fallbackMenu
   }
 
-  return payload.items.reduce((accumulator, item) => {
-    const category = item.category || item.categoria || 'Menu'
-
-    if (!accumulator[category]) {
-      accumulator[category] = []
-    }
-
-    accumulator[category].push({
-      name: item.name || item.nombre,
-      price: Number(item.price ?? item.precio ?? 0),
-      type: item.type || (String(category).toLowerCase().includes('bebida') ? 'drink' : 'dish'),
-      category,
-      description: item.description || item.descripcion || '',
-      _id: item._id || item.id,
-    })
-
-    return accumulator
-  }, {})
+  return groupMenuItemsByCategory(payload.items)
 }
 
 function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken }) {
   const [menuCatalog, setMenuCatalog] = useState(fallbackMenu)
   const [step, setStep] = useState(1)
-  const [selectedCategory, setSelectedCategory] = useState('Bebidas')
+  const [selectedCategory, setSelectedCategory] = useState('')
   const [selectedMenuItem, setSelectedMenuItem] = useState(null)
-  const [selectedNote, setSelectedNote] = useState('Sin hielo')
+  const [selectedNote, setSelectedNote] = useState('Sin observaciones')
   const [selectedQuantity, setSelectedQuantity] = useState(1)
   const [sending, setSending] = useState(false)
   const [feedback, setFeedback] = useState('')
@@ -144,11 +225,13 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
   const [isCajaConnected, setIsCajaConnected] = useState(false)
   const [isReleasingTable, setIsReleasingTable] = useState(false)
   const [dailyExchangeRate, setDailyExchangeRate] = useState(null)
-  const menuCategories = useMemo(() => Object.keys(menuCatalog), [menuCatalog])
+  // Todas las categorías agrupadas, acordeón
+  const menuSections = useMemo(() => buildMenuSections(menuCatalog), [menuCatalog])
+  const menuCategories = useMemo(() => menuSections.map((section) => section.name), [menuSections])
 
   const quickNotes = selectedMenuItem
-    ? quickNotesByCategory[selectedMenuItem.category] || quickNotesByCategory.Platos
-    : quickNotesByCategory[selectedCategory] || quickNotesByCategory.Platos
+    ? getQuickNotesForCategory(selectedMenuItem.category)
+    : getQuickNotesForCategory(selectedCategory)
 
   const totalItems = useMemo(
     () => currentOrder.items.reduce((count, item) => count + 1, 0),
@@ -233,10 +316,11 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
       return
     }
 
-    if (!menuCatalog[selectedCategory]) {
+    if (!menuCategories.includes(selectedCategory)) {
       setSelectedCategory(menuCategories[0])
+      setSelectedNote(getDefaultNote(menuCategories[0]))
     }
-  }, [menuCatalog, menuCategories, selectedCategory])
+  }, [menuCategories, selectedCategory])
 
   useEffect(() => {
     if (!isDirty) {
@@ -287,11 +371,11 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
 
     setStep(1)
     setSelectedMenuItem(null)
-    setSelectedNote('Sin hielo')
-    setSelectedCategory('Bebidas')
+    setSelectedCategory(menuCategories[0] || '')
+    setSelectedNote(getDefaultNote(menuCategories[0]))
     setEditableItems([])
     setIsDirty(false)
-  }, [currentOrder.table])
+  }, [currentOrder.table, menuCategories])
 
   useRestoRealtime({
     authToken,
@@ -362,7 +446,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
     setFeedback('')
     setFeedbackType('default')
     setSelectedMenuItem(item)
-    setSelectedNote(quickNotesByCategory[item.category][0])
+    setSelectedNote(getDefaultNote(item.category))
     setSelectedQuantity(1)
     setStep(3)
   }
@@ -396,7 +480,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
         setFeedbackType('default')
         setFeedback(`${selectedMenuItem.name} x${quantity} agregado a la orden activa.`)
         setSelectedMenuItem(null)
-        setSelectedNote('Sin hielo')
+        setSelectedNote(getDefaultNote(selectedCategory))
         setSelectedQuantity(1)
         setStep(2)
         return
@@ -411,7 +495,7 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
     setFeedbackType('default')
     setFeedback(`${selectedMenuItem.name} x${quantity} agregado a ${currentOrder.table}`)
     setSelectedMenuItem(null)
-    setSelectedNote('Sin hielo')
+    setSelectedNote(getDefaultNote(selectedCategory))
     setSelectedQuantity(1)
     setStep(2)
   }
@@ -464,9 +548,9 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
     setCurrentOrder(initialOrder)
     setStep(1)
     setSelectedMenuItem(null)
-    setSelectedNote('Sin hielo')
+    setSelectedNote(getDefaultNote(menuCategories[0]))
     setSelectedQuantity(1)
-    setSelectedCategory(menuCategories[0] || 'Bebidas')
+    setSelectedCategory(menuCategories[0] || '')
     setEditableItems([])
     setIsDirty(false)
   }
@@ -558,9 +642,9 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
     setEditableItems([])
     setIsDirty(false)
     setSelectedMenuItem(null)
-    setSelectedNote('Sin hielo')
+    setSelectedNote(getDefaultNote(menuCategories[0]))
     setSelectedQuantity(1)
-    setSelectedCategory(menuCategories[0] || 'Bebidas')
+    setSelectedCategory(menuCategories[0] || '')
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/tables/${encodeURIComponent(tableToRelease)}/liberar`, {
@@ -696,53 +780,26 @@ function OrderWizard({ currentOrder, setCurrentOrder, initialOrder, authToken })
 
           {step === 2 ? (
             <div className="flex flex-1 flex-col gap-5">
-              <div className="flex flex-wrap items-center gap-3">
-                {menuCategories.map((category) => {
-                  const active = selectedCategory === category
+              <div className="space-y-4">
+                {menuSections.map((section) => {
+                  const category = section.name
+                  const categoryItems = section.items || []
 
                   return (
-                    <button
+                    <CategoryAccordion
                       key={category}
-                      type="button"
-                      onClick={() => setSelectedCategory(category)}
-                      className={`rounded-2xl px-5 py-3 text-sm font-semibold transition ${
-                        active
-                          ? 'bg-sunsetOrange text-deepCarbon'
-                          : 'border border-carbonLine bg-carbon text-slate-200 hover:bg-carbonCard'
-                      }`}
-                    >
-                      {category}
-                    </button>
+                      categoryName={category}
+                      items={categoryItems}
+                      defaultOpen={selectedCategory === category}
+                      onCategoryOpen={setSelectedCategory}
+                      onItemSelect={(item, openedCategory) => {
+                        setSelectedCategory(openedCategory)
+                        handleMenuSelection(item)
+                      }}
+                      formatPrice={formatPrice}
+                    />
                   )
                 })}
-              </div>
-
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-2">
-                {(menuCatalog[selectedCategory] || []).map((item) => (
-                  <button
-                    key={item._id || item.name}
-                    type="button"
-                    onClick={() => handleMenuSelection(item)}
-                    className="group luxury-hover-lift min-h-[148px] rounded-[28px] border border-carbonLine bg-carbon p-5 text-left transition hover:-translate-y-0.5 hover:border-sunset/70 hover:bg-carbonCard"
-                  >
-                    <span className="inline-flex rounded-full border border-carbonLine bg-carbonCard px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-slate-200">
-                      {item.type === 'dish' ? 'Personalizable' : 'Rapido'}
-                    </span>
-                    <div className="mt-5 flex items-end justify-between gap-3">
-                      <div>
-                        <h3 className="font-display text-2xl font-semibold text-snowText">
-                          {item.name}
-                        </h3>
-                        <p className="mt-2 text-sm text-slate-300">
-                          {item.description || 'Pasa al paso 3 para elegir una nota rapida.'}
-                        </p>
-                      </div>
-                      <p className="text-lg font-semibold text-sunset">
-                        {formatPrice(item.price)}
-                      </p>
-                    </div>
-                  </button>
-                ))}
               </div>
 
               <div className="mt-auto flex flex-col gap-3 border-t border-carbonLine pt-5 sm:flex-row sm:justify-between">

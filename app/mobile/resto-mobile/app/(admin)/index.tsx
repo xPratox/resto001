@@ -24,13 +24,13 @@ type AdminReportResponse = {
   kpis?: {
     totalRevenue?: number;
   };
-  mesoneroStats?: Array<{
+  mesoneroStats?: {
     usuario?: string;
     nombre?: string;
     mesasAtendidas?: number;
     pagosRegistrados?: number;
     ultimoServicio?: string;
-  }>;
+  }[];
 };
 
 type MesoneroStat = {
@@ -43,9 +43,9 @@ type MesoneroStat = {
 
 type AdminTablesResponse = {
   ok?: boolean;
-  tables?: Array<{
+  tables?: {
     occupied?: boolean;
-  }>;
+  }[];
 };
 
 type AdminRateResponse = {
@@ -111,6 +111,8 @@ type MenuItem = {
   precio: number;
 };
 
+type GroupedMenu = Record<string, MenuItem[]>;
+
 type StaffMember = {
   id: string;
   nombre: string;
@@ -151,7 +153,7 @@ const DEFAULT_USER_FORM: UserFormState = {
 
 const FALLBACK_CATEGORIES = ['Platos', 'Bebidas', 'Postres', 'Especiales'];
 const USER_ROLES = ['admin', 'caja', 'mesonero', 'cocina'];
-const ADMIN_NAV_ITEMS: Array<{ id: AdminSection; label: string; icon: keyof typeof Ionicons.glyphMap }> = [
+const ADMIN_NAV_ITEMS: { id: AdminSection; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'stats-chart-outline' },
   { id: 'menu', label: 'Menu / Platos', icon: 'restaurant-outline' },
   { id: 'users', label: 'Usuarios / Personal', icon: 'people-outline' },
@@ -207,6 +209,68 @@ function normalizeMesoneroStats(stats: AdminReportResponse['mesoneroStats']) {
   })) satisfies MesoneroStat[];
 }
 
+function CategoryAccordion({
+  tituloCategoria,
+  itemsList,
+  deletingItemId,
+  onEdit,
+  onDelete,
+  styles,
+}: {
+  tituloCategoria: string;
+  itemsList: MenuItem[];
+  deletingItemId: string | null;
+  onEdit: (item: MenuItem) => void;
+  onDelete: (item: MenuItem) => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <View style={styles.menuAccordionCard}>
+      <Pressable onPress={() => setIsOpen((current) => !current)} style={styles.menuAccordionHeader}>
+        <Text style={styles.menuAccordionTitle}>{tituloCategoria.toUpperCase()}</Text>
+        <Ionicons
+          name="chevron-down"
+          size={18}
+          color={isOpen ? '#BF953F' : '#B0B0B0'}
+          style={isOpen ? styles.menuAccordionIconOpen : styles.menuAccordionIcon}
+        />
+      </Pressable>
+
+      {isOpen ? (
+        <View style={styles.menuAccordionBody}>
+          {itemsList.map((item) => (
+            <View key={item.id} style={styles.listCard}>
+              <View style={styles.listCardTopRow}>
+                <Text style={styles.listCardTitle}>{item.nombre}</Text>
+                <Text style={styles.priceTag}>{formatCurrency(item.precio)}</Text>
+              </View>
+              <Text style={styles.listCardDescription}>{item.descripcion || 'Sin descripción adicional.'}</Text>
+              <View style={styles.menuActionRow}>
+                <Pressable style={styles.menuActionButton} onPress={() => onEdit(item)}>
+                  <Text style={styles.menuActionText}>Editar</Text>
+                </Pressable>
+                <Pressable
+                  style={styles.menuActionDangerButton}
+                  onPress={() => onDelete(item)}
+                  disabled={deletingItemId === item.id}
+                >
+                  {deletingItemId === item.id ? (
+                    <ActivityIndicator size="small" color="#F6F6F6" />
+                  ) : (
+                    <Text style={styles.menuActionDangerText}>Eliminar</Text>
+                  )}
+                </Pressable>
+              </View>
+            </View>
+          ))}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export default function AdminMobileScreen() {
   const { session, logout } = useMobileAuth();
   const router = useRouter();
@@ -233,6 +297,19 @@ export default function AdminMobileScreen() {
   const [bcvDraft, setBcvDraft] = useState('');
   const [copDraft, setCopDraft] = useState('');
   const [isSavingRates, setIsSavingRates] = useState(false);
+  const groupedMenuItems = useMemo<GroupedMenu>(() => {
+    return menuItems.reduce<GroupedMenu>((accumulator, item) => {
+      const category = String(item.categoria || 'MENU').trim().toUpperCase() || 'MENU';
+
+      if (!accumulator[category]) {
+        accumulator[category] = [];
+      }
+
+      accumulator[category].push(item);
+      return accumulator;
+    }, {});
+  }, [menuItems]);
+  const groupedMenuCategories = useMemo(() => Object.keys(groupedMenuItems), [groupedMenuItems]);
 
   const requestJson = useCallback(
     async <T,>(path: string, init?: RequestInit) => {
@@ -615,23 +692,16 @@ export default function AdminMobileScreen() {
                 <View style={styles.menuCardContainer}>
                   <ScrollView style={styles.menuCardScroll} contentContainerStyle={styles.menuCardContent} showsVerticalScrollIndicator={false}>
                     {menuItems.length ? (
-                      menuItems.map((item) => (
-                        <View key={item.id} style={styles.listCard}>
-                          <View style={styles.listCardTopRow}>
-                            <Text style={styles.listCardTitle}>{item.nombre}</Text>
-                            <Text style={styles.priceTag}>{formatCurrency(item.precio)}</Text>
-                          </View>
-                          <Text style={styles.listCardMeta}>{item.categoria}</Text>
-                          <Text style={styles.listCardDescription}>{item.descripcion || 'Sin descripción adicional.'}</Text>
-                          <View style={styles.menuActionRow}>
-                            <Pressable style={styles.menuActionButton} onPress={() => openEditMenuModal(item)}>
-                              <Text style={styles.menuActionText}>Editar</Text>
-                            </Pressable>
-                            <Pressable style={styles.menuActionDangerButton} onPress={() => handleDeleteMenuItem(item)} disabled={deletingItemId === item.id}>
-                              {deletingItemId === item.id ? <ActivityIndicator size="small" color={theme.text.onAccent} /> : <Text style={styles.menuActionDangerText}>Eliminar</Text>}
-                            </Pressable>
-                          </View>
-                        </View>
+                      groupedMenuCategories.map((category) => (
+                        <CategoryAccordion
+                          key={category}
+                          tituloCategoria={category}
+                          itemsList={groupedMenuItems[category] ?? []}
+                          deletingItemId={deletingItemId}
+                          onEdit={openEditMenuModal}
+                          onDelete={handleDeleteMenuItem}
+                          styles={styles}
+                        />
                       ))
                     ) : (
                       <View style={styles.emptyCard}>
@@ -1117,9 +1187,9 @@ const createStyles = (theme: MobileBrandTheme) =>
     },
     listCard: {
       borderRadius: 18,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.border.subtle,
-      backgroundColor: theme.surface.card,
+      borderWidth: 1,
+      borderColor: '#1A1A1A',
+      backgroundColor: '#0A0A0A',
       padding: 16,
       gap: 8,
     },
@@ -1138,14 +1208,9 @@ const createStyles = (theme: MobileBrandTheme) =>
       fontFamily: Fonts?.serif,
     },
     priceTag: {
-      color: theme.text.onAccent,
-      backgroundColor: theme.accent.primary,
-      overflow: 'hidden',
-      paddingHorizontal: 10,
-      paddingVertical: 6,
-      borderRadius: 999,
-      fontSize: 12,
-      fontWeight: '700',
+      color: '#D7D7D7',
+      fontSize: 14,
+      fontWeight: '400',
       fontFamily: Fonts?.sans,
     },
     listCardMeta: {
@@ -1169,9 +1234,9 @@ const createStyles = (theme: MobileBrandTheme) =>
     menuActionButton: {
       minHeight: 36,
       borderRadius: 10,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.border.strong,
-      backgroundColor: theme.surface.elevated,
+      borderWidth: 1,
+      borderColor: '#3A3A3A',
+      backgroundColor: '#1F1F1F',
       paddingHorizontal: 12,
       alignItems: 'center',
       justifyContent: 'center',
@@ -1185,7 +1250,9 @@ const createStyles = (theme: MobileBrandTheme) =>
     menuActionDangerButton: {
       minHeight: 36,
       borderRadius: 10,
-      backgroundColor: theme.status.error,
+      backgroundColor: '#5A2A2A',
+      borderWidth: 1,
+      borderColor: '#703232',
       paddingHorizontal: 12,
       alignItems: 'center',
       justifyContent: 'center',
@@ -1493,9 +1560,9 @@ const createStyles = (theme: MobileBrandTheme) =>
     },
     menuCardContainer: {
       borderRadius: 22,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: theme.border.strong,
-      backgroundColor: theme.surface.card,
+      borderWidth: 1,
+      borderColor: '#1A1A1A',
+      backgroundColor: '#0A0A0A',
       padding: 0,
       marginTop: 10,
       marginBottom: 10,
@@ -1515,4 +1582,37 @@ const createStyles = (theme: MobileBrandTheme) =>
       padding: 16,
       gap: 12,
     },
-  });
+    menuAccordionCard: {
+      borderRadius: 20,
+      backgroundColor: '#0A0A0A',
+      borderWidth: 1,
+      borderColor: '#1A1A1A',
+      overflow: 'hidden',
+    },
+    menuAccordionHeader: {
+      minHeight: 58,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      backgroundColor: '#0A0A0A',
+    },
+    menuAccordionTitle: {
+      color: '#BF953F',
+      fontSize: 15,
+      fontWeight: '800',
+      letterSpacing: 1.2,
+      fontFamily: Fonts?.serif,
+    },
+    menuAccordionIcon: {
+      transform: [{ rotate: '0deg' }],
+    },
+    menuAccordionIconOpen: {
+      transform: [{ rotate: '180deg' }],
+    },
+    menuAccordionBody: {
+      gap: 10,
+      paddingHorizontal: 12,
+      paddingBottom: 12,
+    },  });

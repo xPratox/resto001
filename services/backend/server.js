@@ -331,14 +331,98 @@ function emitOrderRealtime(action, order) {
 	io.emit('order_updated', order);
 }
 const DEFAULT_MENU_ITEMS = [
-	{ nombre: 'Nestea', descripcion: 'Te helado de limon servido frio.', precio: 2.5, categoria: 'Bebidas' },
-	{ nombre: 'Pepsi', descripcion: 'Refresco clasico individual.', precio: 2.0, categoria: 'Bebidas' },
-	{ nombre: 'Agua Mineral', descripcion: 'Botella individual sin gas.', precio: 1.5, categoria: 'Bebidas' },
-	{ nombre: 'Hamburguesa Clasica', descripcion: 'Carne, queso y vegetales frescos.', precio: 7.5, categoria: 'Platos' },
-	{ nombre: 'Perro Caliente', descripcion: 'Pan suave con toppings de la casa.', precio: 5.5, categoria: 'Platos' },
-	{ nombre: 'Club House', descripcion: 'Sandwich triple con papas.', precio: 8.25, categoria: 'Platos' },
-	{ nombre: 'Pizza Margarita', descripcion: 'Pizza individual de queso y tomate.', precio: 9.0, categoria: 'Platos' },
+	{ nombre: 'LOS WEYES', descripcion: 'Duo de tacos blandos de maiz, pescado tempura, cebollitas estilo de la casa, mayo acevichada y aguacate.', precio: 10, categoria: 'PICOTEO' },
+	{ nombre: 'LA LIMENA', descripcion: 'Causa peruana a base de papa, pollo cremoso, tomate cherry y aguacate.', precio: 14, categoria: 'PICOTEO' },
+	{ nombre: 'LA ACEVICHADA', descripcion: 'Causa peruana a base de papa con topping de camarones crocantes, mayo acevichada y mousse de aguacate.', precio: 15, categoria: 'PICOTEO' },
+	{ nombre: 'EL TRAVIESO', descripcion: 'Ceviche clasico peruano de pesca blanca con leche de tigre.', precio: 17, categoria: 'PICOTEO' },
+	{ nombre: 'PONJA', descripcion: 'Ceviche nikkei, pesca blanca en dos texturas, leche de tigre oriental y aguacate.', precio: 17, categoria: 'PICOTEO' },
+	{ nombre: 'MOO', descripcion: 'Carpaccio de lomito, aderezo casero, rucula, pan siciliano y nevado de parmesano.', precio: 16, categoria: 'PICOTEO' },
+	{ nombre: 'ALI BABA', descripcion: 'Hummus de garbanzo estilo de la casa con pan siciliano.', precio: 8, categoria: 'PICOTEO' },
+	{ nombre: 'INDISCRETA', descripcion: 'Burrata, compota de cebolla y bacon, tomates confitados, pesto y pan siciliano.', precio: 15, categoria: 'PICOTEO' },
+	{ nombre: 'CAPRICHOSOS', descripcion: 'Mozzarella crocante con compota de tomate.', precio: 6, categoria: 'PICOTEO' },
+	{ nombre: '3 CHIFLADOS', descripcion: 'Bombones de pollo crocantes con salsa huancaina.', precio: 6, categoria: 'PICOTEO' },
+	{ nombre: 'LAS MALCRIADAS', descripcion: 'Empanadillas de lomo saltado con mayo rocoto.', precio: 6, categoria: 'PICOTEO' },
+	{ nombre: 'BONACHONES', descripcion: 'Tender de pollo con papitas crocantes.', precio: 9, categoria: 'PICOTEO' },
+
+	{ nombre: 'PILATOS', descripcion: 'Lechuga romana, aderezo cesar, bacon, pollo crocante, pan siciliano y parmesano.', precio: 11, categoria: 'ENSALADAS' },
+	{ nombre: 'ATREVIDA', descripcion: 'Lechuga romana, rucula, hierbabuena, honey mustard, mango, tomates confitados, roast beef y queso.', precio: 13, categoria: 'ENSALADAS' },
+
+	{ nombre: 'MELOSITO', descripcion: 'Risotto a la crema de aji con lomo saltado peruano al estilo de la casa.', precio: 19, categoria: 'ARROCES' },
+	{ nombre: 'A LO MACHO', descripcion: 'Arroz cremoso, salsa pomodoro de la casa, camarones picantosos, tomates confitados y parmesano.', precio: 20, categoria: 'ARROCES' },
+
+	{ nombre: 'POPEYE', descripcion: 'Rigatoni al pesto novoandino, tomates confitados y parmesano.', precio: 12, categoria: 'PASTAS' },
+	{ nombre: 'EXTRA CAMARON CROCANTE (POPEYE)', descripcion: 'Extra para pasta Popeye.', precio: 6, categoria: 'PASTAS' },
+	{ nombre: 'EXTRA POLLO CROCANTE (POPEYE)', descripcion: 'Extra para pasta Popeye.', precio: 5, categoria: 'PASTAS' },
+	{ nombre: 'LA SERIA', descripcion: 'Rigatoni en salsa pomodoro al estilo de la casa, bacon y mozzarella gratinada.', precio: 12, categoria: 'PASTAS' },
+	{ nombre: 'EXTRA CAMARON CROCANTE (LA SERIA)', descripcion: 'Extra para pasta La Seria.', precio: 6, categoria: 'PASTAS' },
+	{ nombre: 'EXTRA POLLO CROCANTE (LA SERIA)', descripcion: 'Extra para pasta La Seria.', precio: 2.5, categoria: 'PASTAS' },
+
+	{ nombre: 'FLAQUITA RICA', descripcion: 'Pan brioche, croqueta de res, queso amarillo, compota de cebolla y tocino, huevo y mayo ahumada.', precio: 11, categoria: 'HAMBURGUESAS Y SANGUCHES' },
+	{ nombre: 'MISS COW', descripcion: 'Pan ciabatta, roast beef, rucula, tomates confitados, pesto y mozzarella.', precio: 14, categoria: 'HAMBURGUESAS Y SANGUCHES' },
+	{ nombre: 'POLLITA', descripcion: 'Pan brioche, pollo crocante, tomates confitados, cebolla grillada, queso amarillo, rucula y mayo parchita.', precio: 12, categoria: 'HAMBURGUESAS Y SANGUCHES' },
+	{ nombre: 'MR PIG', descripcion: 'Pan ciabatta con chicharron, cerdo jugoso, batatas, cebollita y mayo rocoto.', precio: 14, categoria: 'HAMBURGUESAS Y SANGUCHES' },
+	{ nombre: 'PITUFINA', descripcion: 'Pan brioche, croqueta de res, queso, tocino y mayo ahumada.', precio: 9.5, categoria: 'HAMBURGUESAS Y SANGUCHES' },
+	{ nombre: 'SERVICIO EXTRA DE PAPAS', descripcion: 'Servicio adicional de papas.', precio: 2.5, categoria: 'HAMBURGUESAS Y SANGUCHES' },
+
+	{ nombre: 'ESPRESSO', descripcion: 'Cafe espresso caliente.', precio: 1.5, categoria: 'CALIENTES' },
+	{ nombre: 'DOPPIO', descripcion: 'Doble espresso.', precio: 2.5, categoria: 'CALIENTES' },
+	{ nombre: 'RISTRETTO', descripcion: 'Cafe corto y concentrado.', precio: 1.5, categoria: 'CALIENTES' },
+	{ nombre: 'LUNGO', descripcion: 'Cafe largo.', precio: 2.5, categoria: 'CALIENTES' },
+	{ nombre: 'CAPPUCCINO', descripcion: 'Cafe cappuccino.', precio: 2.5, categoria: 'CALIENTES' },
+	{ nombre: 'LATTE', descripcion: 'Cafe latte.', precio: 2.5, categoria: 'CALIENTES' },
+	{ nombre: 'LATTE VAINILLA', descripcion: 'Cafe latte sabor vainilla.', precio: 2.7, categoria: 'CALIENTES' },
+	{ nombre: 'MOCCA', descripcion: 'Cafe moka.', precio: 3.5, categoria: 'CALIENTES' },
+	{ nombre: 'IRLANDES', descripcion: 'Cafe irlandes.', precio: 2.5, categoria: 'CALIENTES' },
+	{ nombre: 'AMERICANO', descripcion: 'Cafe americano.', precio: 1.5, categoria: 'CALIENTES' },
+	{ nombre: 'BOM BOM', descripcion: 'Cafe bom bom.', precio: 3, categoria: 'CALIENTES' },
+	{ nombre: 'AFFOGATO', descripcion: 'Cafe con helado.', precio: 3.5, categoria: 'CALIENTES' },
+	{ nombre: 'CHOCOLATE', descripcion: 'Chocolate caliente.', precio: 2.7, categoria: 'CALIENTES' },
+	{ nombre: 'EXTRA LECHE DE ALMENDRA', descripcion: 'Adicional de leche de almendra.', precio: 0.5, categoria: 'CALIENTES' },
+	{ nombre: 'EXTRA LECHE DESLACTOSADA', descripcion: 'Adicional de leche deslactosada.', precio: 0.5, categoria: 'CALIENTES' },
+
+	{ nombre: 'PITUFIMALTEADA', descripcion: 'Helado de algodon de azucar.', precio: 6, categoria: 'MALTEADAS Y MERENGADAS' },
+	{ nombre: 'CAPERUCITA', descripcion: 'Leche y helado de frutos rojos.', precio: 6, categoria: 'MALTEADAS Y MERENGADAS' },
+	{ nombre: 'CHINAZO', descripcion: 'Malteada especial.', precio: 7, categoria: 'MALTEADAS Y MERENGADAS' },
+	{ nombre: 'OREO', descripcion: 'Helado con galleta oreo.', precio: 7, categoria: 'MALTEADAS Y MERENGADAS' },
+	{ nombre: 'EUREKA', descripcion: 'Helado, caramelo salado y chantilly.', precio: 6, categoria: 'MALTEADAS Y MERENGADAS' },
+
+	{ nombre: 'EXTRA LICOR DE CAFE', descripcion: 'Adicional para frappuccino.', precio: 0.5, categoria: 'FRAPPUCCINOS' },
+	{ nombre: 'SIMPLON', descripcion: 'Espresso helado.', precio: 5, categoria: 'FRAPPUCCINOS' },
+	{ nombre: 'ACARAMELADO', descripcion: 'Espresso helado con chantilly.', precio: 6, categoria: 'FRAPPUCCINOS' },
+	{ nombre: 'GOLOSO', descripcion: 'Espresso helado con chocolate.', precio: 6, categoria: 'FRAPPUCCINOS' },
+	{ nombre: 'ICE COFFEE', descripcion: 'Cafe frio.', precio: 3.5, categoria: 'FRAPPUCCINOS' },
+	{ nombre: 'TODDY FRIO', descripcion: 'Bebida fria de cacao.', precio: 5, categoria: 'FRAPPUCCINOS' },
+
+	{ nombre: 'FRAPPE DE FRUTOS ROJOS', descripcion: 'Bebida frappe de frutos rojos.', precio: 4, categoria: 'BEBIDAS' },
+	{ nombre: 'FRAPPE PARCHITA', descripcion: 'Bebida frappe de parchita.', precio: 4, categoria: 'BEBIDAS' },
+	{ nombre: 'FRAPPE HIERBABUENA', descripcion: 'Bebida frappe de hierbabuena.', precio: 4, categoria: 'BEBIDAS' },
+	{ nombre: 'FRAPPE DE FRESA', descripcion: 'Bebida frappe de fresa.', precio: 4, categoria: 'BEBIDAS' },
+	{ nombre: 'NESTEA', descripcion: 'Te frio.', precio: 2, categoria: 'BEBIDAS' },
+	{ nombre: 'REFRESCO', descripcion: 'Refresco.', precio: 2, categoria: 'BEBIDAS' },
+	{ nombre: 'AGUA', descripcion: 'Agua.', precio: 2, categoria: 'BEBIDAS' },
+	{ nombre: 'CERVEZA/CHELADAS', descripcion: 'Cerveza o chelada.', precio: 1.5, categoria: 'BEBIDAS' },
+
+	{ nombre: 'TINTO RESTO', descripcion: 'Vino tinto, triple sec, limon, jarabe de goma y cerveza.', precio: 7, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'PETER', descripcion: 'Tequila, curacao blue, limon, hierbabuena y parchita.', precio: 7, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'MARIA LUISA', descripcion: 'Ron blanco, ron coco, curacao blue, hierbabuena, limon y cerveza.', precio: 6, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'FUERA DEL RESTO', descripcion: 'Ron dorado, amaretto, lichuvas, triple sec, limon, miel de gengibre, cerveza y paleta de helado.', precio: 8, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'ISABELITA', descripcion: 'Ron blanco, licor de menta, parchita y cerveza.', precio: 7, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'DONA ROSA', descripcion: 'Vino blanco, gin, limon, soda de limon y frutas.', precio: 7, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'MANUEL ALBERTO', descripcion: 'Ron blanco, vodka, jalea de frutos rojos, limon, jarabe de goma y top de cerveza.', precio: 6, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'CANDY CRUSH', descripcion: 'Vodka, limon, hierbabuena, soda de limon y algodon de azucar.', precio: 6, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: '911', descripcion: 'Flameado tequila, licor de cafe y sambuca.', precio: 4, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'DIGESTIVOS', descripcion: 'Limoncello, sambuca, amaretto, licor de cafe y aguardiente.', precio: 3, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'MOJITO', descripcion: 'Coctel mojito.', precio: 5, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'CAIPI', descripcion: 'Coctel caipirinha.', precio: 5, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'MARGARITA', descripcion: 'Coctel margarita.', precio: 7, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'CUBA LIBRE', descripcion: 'Coctel cuba libre.', precio: 5, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'VODKA TONIC', descripcion: 'Coctel vodka tonic.', precio: 6, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'GIN TONIC', descripcion: 'Coctel gin tonic.', precio: 6, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'PINA COLADA', descripcion: 'Coctel pina colada.', precio: 7, categoria: 'COCTELES DE LA CASA' },
+	{ nombre: 'DAIQUIRI', descripcion: 'Coctel daiquiri.', precio: 6, categoria: 'COCTELES DE LA CASA' },
 ];
+
+const LEGACY_MENU_NAMES = ['Hamburguesa Clasica', 'Perro Caliente', 'Club House', 'Pizza Margarita'];
 
 function serializeMenuItem(item) {
 	const plainItem = typeof item?.toObject === 'function' ? item.toObject() : item;
@@ -1336,12 +1420,21 @@ async function ensureUserCollectionCompatibility() {
 async function ensureMenuSeed() {
 	const existingItems = await MenuItem.countDocuments();
 
-	if (existingItems > 0) {
+	if (existingItems === 0) {
+		await MenuItem.insertMany(DEFAULT_MENU_ITEMS);
+		brandLog.success('Menu inicial cargado en MongoDB.');
 		return;
 	}
 
+	const hasLegacyMenu = await MenuItem.exists({ nombre: { $in: LEGACY_MENU_NAMES } });
+
+	if (!hasLegacyMenu) {
+		return;
+	}
+
+	await MenuItem.deleteMany({});
 	await MenuItem.insertMany(DEFAULT_MENU_ITEMS);
-	brandLog.success('Menu inicial cargado en MongoDB.');
+	brandLog.success('Menu legado reemplazado por el nuevo catalogo de secciones.');
 }
 
 async function ensureGlobalSettingsSeed() {
@@ -3239,61 +3332,103 @@ process.on('SIGTERM', () => {
 	void shutdown('SIGTERM');
 });
 
+
 async function startServer() {
-	try {
-		await mongoose.connect(MONGODB_URI);
-		brandLog.success(`MongoDB conectado en ${MONGODB_URI}`);
-		await ensureGlobalSettingsSeed();
-		await ensureMenuSeed();
-		await ensureDefaultUsers();
-		await broadcastStaffStatus();
+       try {
+	       await mongoose.connect(MONGODB_URI);
+	       brandLog.success(`MongoDB conectado en ${MONGODB_URI}`);
+	       await ensureGlobalSettingsSeed();
+	       await ensureMenuSeed();
+	       await ensureDefaultUsers();
+	       await broadcastStaffStatus();
 
-		try {
-			await listenOnConfiguredPort();
-		} catch (error) {
-			if (error.code === 'EADDRINUSE' && AUTO_RECOVER_PORT) {
-				const released = await releaseOccupiedPort(PORT);
+	       // --- Escuchar puerto ---
+	       try {
+		       await listenOnConfiguredPort();
+	       } catch (error) {
+		       if (error.code === 'EADDRINUSE' && AUTO_RECOVER_PORT) {
+			       const released = await releaseOccupiedPort(PORT);
+			       if (!released) throw error;
+			       brandLog.warn(`Puerto ${PORT} liberado. Reintentando arranque del backend...`);
+			       await listenOnConfiguredPort();
+		       } else {
+			       throw error;
+		       }
+	       }
 
-				if (!released) {
-					throw error;
-				}
+	       // --- Reseteo de tasas: cron y verificación al iniciar ---
+	       startDailyRateResetJob({
+		       GlobalSetting,
+		       brandLog,
+		       timezone: EXCHANGE_RATE_TIMEZONE,
+		       onReset: async (resetTimestamp) => {
+			       io.emit('global_settings_updated', {
+				       rateControl: {
+					       isLockedForDay: false,
+					       lockedDayKey: '',
+					       lastResetAt: resetTimestamp,
+				       },
+				       updatedAt: resetTimestamp.toISOString(),
+			       });
+		       },
+	       });
 
-				brandLog.warn(`Puerto ${PORT} liberado. Reintentando arranque del backend...`);
-				await listenOnConfiguredPort();
-			} else {
-				throw error;
-			}
-		}
+	       // --- Verificación automática de reseteo ---
+	       (async () => {
+		       try {
+			       const settings = await GlobalSetting.findOne({ key: 'global' });
+			       const tz = EXCHANGE_RATE_TIMEZONE || 'America/Caracas';
+			       const now = new Date();
+			       const formatter = new Intl.DateTimeFormat('en-CA', {
+				       timeZone: tz,
+				       year: 'numeric', month: '2-digit', day: '2-digit',
+			       });
+			       const todayKey = formatter.format(now);
+			       const lastResetAt = settings?.rateControl?.lastResetAt;
+			       let lastResetKey = '';
+			       if (lastResetAt) {
+				       lastResetKey = formatter.format(new Date(lastResetAt));
+			       }
+			       if (todayKey !== lastResetKey) {
+				       await GlobalSetting.updateOne(
+					       { key: 'global' },
+					       {
+						       $set: {
+							       'rateControl.isLockedForDay': false,
+							       'rateControl.lockedDayKey': '',
+							       'rateControl.lastResetAt': now,
+						       },
+					       },
+					       { upsert: true }
+				       );
+				       brandLog.info('[AutoReset] Bloqueo diario de tasas reiniciado automáticamente al iniciar el backend.');
+				       io.emit('global_settings_updated', {
+					       rateControl: {
+						       isLockedForDay: false,
+						       lockedDayKey: '',
+						       lastResetAt: now,
+					       },
+					       updatedAt: now.toISOString(),
+				       });
+			       }
+		       } catch (err) {
+			       brandLog.error('[AutoReset] Error verificando reseteo de tasas al iniciar: ' + err.message);
+		       }
+	       })();
 
-		startDailyRateResetJob({
-			GlobalSetting,
-			brandLog,
-			timezone: EXCHANGE_RATE_TIMEZONE,
-			onReset: async (resetTimestamp) => {
-				io.emit('global_settings_updated', {
-					rateControl: {
-						isLockedForDay: false,
-						lockedDayKey: '',
-						lastResetAt: resetTimestamp,
-					},
-					updatedAt: resetTimestamp.toISOString(),
-				});
-			},
-		});
+	       brandLog.info(`Servidor escuchando en http://${HOST}:${PORT}`);
+       } catch (error) {
+	       if (error.code === 'EADDRINUSE') {
+		       brandLog.error(
+			       `El puerto ${PORT} sigue ocupado y no se pudo recuperar automaticamente. Puedes desactivar la recuperacion con AUTO_RECOVER_PORT=false.`
+		       );
+	       } else {
+		       brandLog.error(`Error iniciando el backend: ${error.message}`);
+	       }
 
-		brandLog.info(`Servidor escuchando en http://${HOST}:${PORT}`);
-	} catch (error) {
-		if (error.code === 'EADDRINUSE') {
-			brandLog.error(
-				`El puerto ${PORT} sigue ocupado y no se pudo recuperar automaticamente. Puedes desactivar la recuperacion con AUTO_RECOVER_PORT=false.`
-			);
-		} else {
-			brandLog.error(`Error iniciando el backend: ${error.message}`);
-		}
-
-		await disconnectMongo();
-		process.exit(1);
-	}
+	       await disconnectMongo();
+	       process.exit(1);
+       }
 }
 
 startServer();

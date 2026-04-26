@@ -1,4 +1,32 @@
-import { Pencil, Plus, Trash2, X } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { ChevronDown, Pencil, Plus, Trash2, X } from 'lucide-react'
+
+const MENU_SECTION_ORDER = [
+  'PICOTEO',
+  'ENSALADAS',
+  'ARROCES',
+  'PASTAS',
+  'HAMBURGUESAS Y SANGUCHES',
+  'DE LA BARRA DE CAFE',
+  'BEBIDAS',
+  'COCTELES DE LA CASA',
+]
+const CAFE_CATEGORIES = ['CALIENTES', 'MALTEADAS Y MERENGADAS', 'FRAPPUCCINOS']
+
+function getSectionOrderIndex(category) {
+  const normalized = String(category || '').trim().toUpperCase()
+  const index = MENU_SECTION_ORDER.indexOf(normalized)
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index
+}
+
+function mapCategoryToSection(category) {
+  const normalized = String(category || '').trim().toUpperCase()
+  if (CAFE_CATEGORIES.includes(normalized)) {
+    return 'DE LA BARRA DE CAFE'
+  }
+
+  return normalized || 'MENU'
+}
 
 function formatCurrency(value) {
   return new Intl.NumberFormat('es-VE', {
@@ -31,6 +59,58 @@ function MenuManager({
   className = '',
 }) {
   const isEditing = Boolean(form.id)
+  const groupedMenu = useMemo(() => {
+    const grouped = menuItems.reduce((accumulator, item) => {
+      const sourceCategory = String(item?.categoria || 'Menu').trim().toUpperCase() || 'MENU'
+      const section = mapCategoryToSection(sourceCategory)
+
+      if (!accumulator[section]) {
+        accumulator[section] = []
+      }
+
+      accumulator[section].push({
+        ...item,
+        _sourceCategory: sourceCategory,
+      })
+      return accumulator
+    }, {})
+
+    return Object.entries(grouped).sort((left, right) => {
+      const byOrder = getSectionOrderIndex(left[0]) - getSectionOrderIndex(right[0])
+      if (byOrder !== 0) {
+        return byOrder
+      }
+
+      return left[0].localeCompare(right[0])
+    }).map(([sectionName, items]) => {
+      const sortedItems = [...items].sort((leftItem, rightItem) => {
+        if (sectionName === 'DE LA BARRA DE CAFE') {
+          const byCafeType = CAFE_CATEGORIES.indexOf(leftItem._sourceCategory) - CAFE_CATEGORIES.indexOf(rightItem._sourceCategory)
+          if (byCafeType !== 0) {
+            return byCafeType
+          }
+        }
+
+        return String(leftItem?.nombre || '').localeCompare(String(rightItem?.nombre || ''))
+      })
+
+      return [sectionName, sortedItems]
+    })
+  }, [menuItems])
+  const [openCategory, setOpenCategory] = useState('')
+
+  useEffect(() => {
+    if (!groupedMenu.length) {
+      setOpenCategory('')
+      return
+    }
+
+    const exists = groupedMenu.some(([categoryName]) => categoryName === openCategory)
+
+    if (!exists) {
+      setOpenCategory(groupedMenu[0][0])
+    }
+  }, [groupedMenu, openCategory])
 
   return (
     <section className={`relative flex min-h-0 flex-col overflow-hidden rounded-[24px] sm:rounded-[30px] border border-white/10 bg-slate-900/60 backdrop-blur-md ${className}`}>
@@ -58,116 +138,83 @@ function MenuManager({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 px-4 sm:px-5 pb-5 pt-4">
-        <div className="space-y-3 md:hidden">
-          {menuItems.length ? (
-            menuItems.map((item) => (
-              <article key={item._id} className="rounded-[24px] border border-white/10 bg-slate-950/45 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-cyan-300/15 bg-gradient-to-br from-cyan-400/20 via-sky-400/10 to-transparent text-sm font-semibold text-cyan-100">
-                      {getThumbnailLabel(item.nombre)}
-                    </div>
+      <div className="glass-scrollbar min-h-0 flex-1 overflow-auto px-4 sm:px-5 pb-5 pt-4">
+        {groupedMenu.length ? (
+          <div className="space-y-4">
+            {groupedMenu.map(([categoryName, items]) => {
+              const isOpen = openCategory === categoryName
+
+              return (
+                <section key={categoryName} className="overflow-hidden rounded-3xl border border-white/10 bg-slate-950/45">
+                  <button
+                    type="button"
+                    onClick={() => setOpenCategory((current) => (current === categoryName ? '' : categoryName))}
+                    className={`flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition ${
+                      isOpen ? 'bg-cyan-400/12' : 'hover:bg-white/5'
+                    }`}
+                  >
                     <div>
-                      <h3 className="text-base font-semibold text-white">{item.nombre}</h3>
-                      <p className="mt-1 text-sm text-slate-400">{item.categoria}</p>
+                      <p className="text-[11px] uppercase tracking-[0.24em] text-cyan-200">Seccion</p>
+                      <h3 className="mt-1 text-base sm:text-lg font-semibold text-white">{categoryName}</h3>
                     </div>
-                  </div>
-                  <span className="text-sm font-semibold text-cyan-100">{formatCurrency(item.precio)}</span>
-                </div>
-
-                <p className="mt-3 text-sm text-slate-300">{item.descripcion || 'Sin descripcion'}</p>
-
-                <div className="mt-4 flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onEdit(item)}
-                    className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-400/10 hover:text-cyan-100"
-                  >
-                    <Pencil className="h-4 w-4" />
-                    Editar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDelete(item)}
-                    className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-slate-200 transition hover:border-rose-300/40 hover:bg-rose-400/10 hover:text-rose-100"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Eliminar
-                  </button>
-                </div>
-              </article>
-            ))
-          ) : (
-            <div className="rounded-3xl border border-white/10 bg-slate-950/45 px-4 py-10 text-center text-sm text-slate-400">
-              No hay platos cargados todavia.
-            </div>
-          )}
-        </div>
-
-        <div className="glass-scrollbar hidden h-full overflow-auto rounded-3xl border border-white/10 bg-slate-950/45 md:block">
-          <table className="min-w-full text-left text-sm text-slate-200">
-            <thead className="sticky top-0 z-10 bg-slate-950/95 text-[11px] uppercase tracking-[0.24em] text-slate-400 backdrop-blur-md">
-              <tr>
-                <th className="px-4 py-3 font-medium">Imagen</th>
-                <th className="px-4 py-3 font-medium">Nombre</th>
-                <th className="px-4 py-3 font-medium">Categoria</th>
-                <th className="px-4 py-3 font-medium">Precio</th>
-                <th className="hidden lg:table-cell px-4 py-3 font-medium">Descripcion</th>
-                <th className="px-4 py-3 text-right font-medium">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {menuItems.length ? (
-                menuItems.map((item) => (
-                  <tr key={item._id} className="border-t border-white/6 transition hover:bg-white/4">
-                    <td className="px-4 py-3">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-cyan-300/15 bg-gradient-to-br from-cyan-400/20 via-sky-400/10 to-transparent text-sm font-semibold text-cyan-100">
-                        {getThumbnailLabel(item.nombre)}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 font-medium text-white">{item.nombre}</td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-200">
-                        {item.categoria}
+                    <div className="flex items-center gap-3">
+                      <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-slate-200">
+                        {items.length} items
                       </span>
-                    </td>
-                    <td className="px-4 py-3 font-medium text-cyan-100">{formatCurrency(item.precio)}</td>
-                    <td className="hidden lg:table-cell max-w-[18rem] px-4 py-3 text-slate-400">{item.descripcion || 'Sin descripcion'}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onEdit(item)}
-                          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-400/10 hover:text-cyan-100"
-                          aria-label={`Editar ${item.nombre}`}
-                          title="Editar"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDelete(item)}
-                          className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-slate-200 transition hover:border-rose-300/40 hover:bg-rose-400/10 hover:text-rose-100"
-                          aria-label={`Eliminar ${item.nombre}`}
-                          title="Eliminar"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan="6" className="px-4 py-10 text-center text-sm md:text-base text-slate-400">
-                    No hay platos cargados todavia.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+                      <ChevronDown className={`h-4 w-4 text-slate-300 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                    </div>
+                  </button>
+
+                  {isOpen ? (
+                    <div className="space-y-3 border-t border-white/10 p-4">
+                      {items.map((item) => (
+                        <article key={item._id} className="rounded-[24px] border border-white/10 bg-slate-900/50 p-4">
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="flex items-center gap-3">
+                              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-cyan-300/15 bg-gradient-to-br from-cyan-400/20 via-sky-400/10 to-transparent text-sm font-semibold text-cyan-100">
+                                {getThumbnailLabel(item.nombre)}
+                              </div>
+                              <div>
+                                <h4 className="text-base font-semibold text-white">{item.nombre}</h4>
+                                <p className="mt-1 text-sm text-slate-400">{item._sourceCategory || categoryName}</p>
+                              </div>
+                            </div>
+                            <span className="text-sm font-semibold text-cyan-100">{formatCurrency(item.precio)}</span>
+                          </div>
+
+                          <p className="mt-3 text-sm text-slate-300">{item.descripcion || 'Sin descripcion'}</p>
+
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            <button
+                              type="button"
+                              onClick={() => onEdit(item)}
+                              className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-slate-200 transition hover:border-cyan-300/40 hover:bg-cyan-400/10 hover:text-cyan-100"
+                            >
+                              <Pencil className="h-4 w-4" />
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => onDelete(item)}
+                              className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm font-medium text-slate-200 transition hover:border-rose-300/40 hover:bg-rose-400/10 hover:text-rose-100"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                              Eliminar
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  ) : null}
+                </section>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="rounded-3xl border border-white/10 bg-slate-950/45 px-4 py-10 text-center text-sm text-slate-400">
+            No hay platos cargados todavia.
+          </div>
+        )}
       </div>
 
       <div className="pointer-events-none fixed inset-y-0 right-0 z-40 flex justify-end">
