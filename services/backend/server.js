@@ -7,7 +7,7 @@ const chalkModule = require('chalk');
 const { addHours, endOfDay, parse, startOfDay } = require('date-fns');
 const jwt = require('jsonwebtoken');
 const { sanitizeKitchenOrder, shouldShowKitchenOrder } = require('./middleware/kitchenPayload');
-const { startDailyRateResetJob } = require('./jobs/resetDailyRateLock');
+const { ensureRateResetOnStartup, startDailyRateResetJob } = require('./jobs/resetDailyRateLock');
 const { User } = require('./models/User');
 const { MenuItem } = require('./models/MenuItem');
 const { GlobalSetting } = require('./models/GlobalSetting');
@@ -156,6 +156,10 @@ const PORT_RECOVERY_WAIT_MS = 250;
 const PORT_RECOVERY_MAX_ATTEMPTS = 12;
 const RATE_HISTORY_LIMIT = 14;
 const KITCHEN_COMANDA_LIMIT = 50;
+const parsedBaseBcvRate = Number(process.env.RATE_RESET_BASE_BCV);
+const parsedBaseCopRate = Number(process.env.RATE_RESET_BASE_COP);
+const RATE_RESET_BASE_BCV = Number.isFinite(parsedBaseBcvRate) && parsedBaseBcvRate >= 0 ? parsedBaseBcvRate : 0;
+const RATE_RESET_BASE_COP = Number.isFinite(parsedBaseCopRate) && parsedBaseCopRate >= 0 ? parsedBaseCopRate : 0;
 const TABLE_DEFINITIONS = [
 	{ table: 'Mesa 1', section: 'Sala', capacity: 4, highlighted: false },
 	{ table: 'Mesa 2', section: 'Sala', capacity: 4, highlighted: false },
@@ -2333,6 +2337,85 @@ app.put('/api/exchange-rate/today', authorizeRoles('admin'), authorizeSuperAdmin
 	}
 });
 
+app.post('/api/tasa/reset', authorizeRoles('admin'), async (req, res) => {
+	const now = new Date();
+	const dayKey = getHistoryDateKey(now, EXCHANGE_RATE_TIMEZONE);
+
+	try {
+		await Promise.all([
+			GlobalSetting.updateMany(
+				{},
+				{
+					$set: {
+						'manualRates.bcv.value': 0,
+						'manualRates.bcv.updatedAt': now,
+						'manualRates.bcv.updatedBy': 'admin-reset',
+						'manualRates.cop.value': 0,
+						'manualRates.cop.updatedAt': now,
+						'manualRates.cop.updatedBy': 'admin-reset',
+						'rateControl.isLockedForDay': false,
+						'rateControl.lockedDayKey': '',
+						'rateControl.lastResetAt': now,
+					},
+				}
+			),
+			DailyExchangeRate.deleteMany({ dayKey }),
+			DailyPesoRate.deleteMany({ dayKey }),
+		]);
+
+		io.emit('tasa_actualizada', {
+			rateType: 'bcv',
+			dayKey,
+			rate: 0,
+			timezone: EXCHANGE_RATE_TIMEZONE,
+			assignedAt: now,
+		});
+
+		io.emit('tasa_actualizada', {
+			rateType: 'pesos',
+			dayKey,
+			rate: 0,
+			timezone: EXCHANGE_RATE_TIMEZONE,
+			assignedAt: now,
+		});
+
+		io.emit('global_settings_updated', {
+			manualRates: {
+				bcv: {
+					value: 0,
+					updatedAt: now,
+					updatedBy: 'admin-reset',
+				},
+				cop: {
+					value: 0,
+					updatedAt: now,
+					updatedBy: 'admin-reset',
+				},
+			},
+			rateControl: {
+				isLockedForDay: false,
+				lockedDayKey: '',
+				lastResetAt: now,
+			},
+			updatedAt: now.toISOString(),
+		});
+
+		return res.status(200).json({
+			ok: true,
+			message: 'Tasa reiniciada a 0 correctamente.',
+			rate: 0,
+			dayKey,
+			updatedAt: now.toISOString(),
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: 'No se pudo reiniciar la tasa.',
+			error: error.message,
+		});
+	}
+});
+
 app.delete('/api/exchange-rate/today', async (req, res) => {
 	return res.status(403).json({
 		ok: false,
@@ -3361,8 +3444,22 @@ async function startServer() {
 		       GlobalSetting,
 		       brandLog,
 		       timezone: EXCHANGE_RATE_TIMEZONE,
+		       baseBcvRate: RATE_RESET_BASE_BCV,
+		       baseCopRate: RATE_RESET_BASE_COP,
 		       onReset: async (resetTimestamp) => {
 			       io.emit('global_settings_updated', {
+				       manualRates: {
+					       bcv: {
+						       value: RATE_RESET_BASE_BCV,
+						       updatedAt: resetTimestamp,
+						       updatedBy: 'system-cron',
+					       },
+					       cop: {
+						       value: RATE_RESET_BASE_COP,
+						       updatedAt: resetTimestamp,
+						       updatedBy: 'system-cron',
+					       },
+				       },
 				       rateControl: {
 					       isLockedForDay: false,
 					       lockedDayKey: '',
@@ -3374,47 +3471,39 @@ async function startServer() {
 	       });
 
 	       // --- Verificación automática de reseteo ---
-	       (async () => {
-		       try {
-			       const settings = await GlobalSetting.findOne({ key: 'global' });
-			       const tz = EXCHANGE_RATE_TIMEZONE || 'America/Caracas';
-			       const now = new Date();
-			       const formatter = new Intl.DateTimeFormat('en-CA', {
-				       timeZone: tz,
-				       year: 'numeric', month: '2-digit', day: '2-digit',
-			       });
-			       const todayKey = formatter.format(now);
-			       const lastResetAt = settings?.rateControl?.lastResetAt;
-			       let lastResetKey = '';
-			       if (lastResetAt) {
-				       lastResetKey = formatter.format(new Date(lastResetAt));
-			       }
-			       if (todayKey !== lastResetKey) {
-				       await GlobalSetting.updateOne(
-					       { key: 'global' },
-					       {
-						       $set: {
-							       'rateControl.isLockedForDay': false,
-							       'rateControl.lockedDayKey': '',
-							       'rateControl.lastResetAt': now,
+	       try {
+		       await ensureRateResetOnStartup({
+			       GlobalSetting,
+			       brandLog,
+			       timezone: EXCHANGE_RATE_TIMEZONE,
+			       baseBcvRate: RATE_RESET_BASE_BCV,
+			       baseCopRate: RATE_RESET_BASE_COP,
+			       onReset: async (resetTimestamp) => {
+				       io.emit('global_settings_updated', {
+					       manualRates: {
+						       bcv: {
+							       value: RATE_RESET_BASE_BCV,
+							       updatedAt: resetTimestamp,
+							       updatedBy: 'system-cron',
+						       },
+						       cop: {
+							       value: RATE_RESET_BASE_COP,
+							       updatedAt: resetTimestamp,
+							       updatedBy: 'system-cron',
 						       },
 					       },
-					       { upsert: true }
-				       );
-				       brandLog.info('[AutoReset] Bloqueo diario de tasas reiniciado automáticamente al iniciar el backend.');
-				       io.emit('global_settings_updated', {
 					       rateControl: {
 						       isLockedForDay: false,
 						       lockedDayKey: '',
-						       lastResetAt: now,
+						       lastResetAt: resetTimestamp,
 					       },
-					       updatedAt: now.toISOString(),
+					       updatedAt: resetTimestamp.toISOString(),
 				       });
-			       }
-		       } catch (err) {
-			       brandLog.error('[AutoReset] Error verificando reseteo de tasas al iniciar: ' + err.message);
-		       }
-	       })();
+			       },
+		       });
+	       } catch (err) {
+		       brandLog.error('[AutoReset] Error verificando reseteo de tasas al iniciar: ' + err.message);
+	       }
 
 	       brandLog.info(`Servidor escuchando en http://${HOST}:${PORT}`);
        } catch (error) {

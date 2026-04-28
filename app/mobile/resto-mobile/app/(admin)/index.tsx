@@ -1,5 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
+import { RotateCcw } from 'lucide-react-native/dist/cjs/lucide-react-native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
@@ -10,6 +12,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -297,6 +300,7 @@ export default function AdminMobileScreen() {
   const [bcvDraft, setBcvDraft] = useState('');
   const [copDraft, setCopDraft] = useState('');
   const [isSavingRates, setIsSavingRates] = useState(false);
+  const [isResettingRates, setIsResettingRates] = useState(false);
   const groupedMenuItems = useMemo<GroupedMenu>(() => {
     return menuItems.reduce<GroupedMenu>((accumulator, item) => {
       const category = String(item.categoria || 'MENU').trim().toUpperCase() || 'MENU';
@@ -605,10 +609,62 @@ export default function AdminMobileScreen() {
     }
   }, [bcvDraft, copDraft, loadAdminData, requestJson]);
 
+  const handleConfirmResetRates = useCallback(() => {
+    Alert.alert('Confirmar Reinicio', '¿Estás seguro de volver la tasa a 0?', [
+      {
+        text: 'No',
+        style: 'cancel',
+      },
+      {
+        text: 'Sí',
+        style: 'destructive',
+        onPress: () => {
+          void (async () => {
+            if (isResettingRates) {
+              return;
+            }
+
+            setIsResettingRates(true);
+            setErrorMessage('');
+
+            try {
+              await requestJson('/api/tasa/reset', {
+                method: 'POST',
+              });
+
+              setBcvDraft('0.00');
+              setCopDraft('0.00');
+              setCards((currentCards) =>
+                currentCards.map((card) => {
+                  if (card.id !== 'tasa-actual') {
+                    return card;
+                  }
+
+                  return {
+                    ...card,
+                    value: 'BCV 0.00',
+                    helper: 'COP 0.00',
+                  };
+                }),
+              );
+
+              await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (error) {
+              setErrorMessage(error instanceof Error ? error.message : 'No se pudo reiniciar la tasa.');
+            } finally {
+              setIsResettingRates(false);
+            }
+          })();
+        },
+      },
+    ]);
+  }, [isResettingRates, requestJson]);
+
   if (!session) {
     return null;
   }
 
+  const isAdminRole = String(session.rol || '').trim().toLowerCase() === 'admin';
   const isSuperAdmin = String(session.usuario || '').trim().toLowerCase() === 'admin';
 
   const activeSectionLabel = ADMIN_NAV_ITEMS.find((item) => item.id === activeSection)?.label || 'Dashboard';
@@ -799,6 +855,21 @@ export default function AdminMobileScreen() {
                     </Pressable>
                   ) : (
                     <Text style={styles.metricHelper}>Solo el super admin puede actualizar las tasas.</Text>
+                  )}
+
+                  {isAdminRole && (
+                    <TouchableOpacity
+                      style={[styles.resetRateButton, isResettingRates && styles.resetRateButtonDisabled]}
+                      onPress={handleConfirmResetRates}
+                      disabled={isResettingRates}
+                      activeOpacity={0.85}>
+                      {isResettingRates ? (
+                        <ActivityIndicator size="small" color="#BF953F" />
+                      ) : (
+                        <RotateCcw size={16} color="#BF953F" strokeWidth={2} />
+                      )}
+                      <Text style={styles.resetRateButtonText}>RESET TASA</Text>
+                    </TouchableOpacity>
                   )}
                 </View>
 
@@ -1369,6 +1440,30 @@ const createStyles = (theme: MobileBrandTheme) =>
     },
     primaryButtonDisabled: {
       opacity: 0.6,
+    },
+    resetRateButton: {
+      marginTop: 10,
+      minHeight: 46,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: '#BF953F',
+      backgroundColor: '#000000',
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 8,
+      paddingHorizontal: 14,
+    },
+    resetRateButtonDisabled: {
+      opacity: 0.7,
+    },
+    resetRateButtonText: {
+      color: '#BF953F',
+      fontSize: 13,
+      fontFamily: Fonts?.serif,
+      fontWeight: '700',
+      letterSpacing: 1.4,
+      textTransform: 'uppercase',
     },
     primaryButtonText: {
       color: theme.text.onAccent,
