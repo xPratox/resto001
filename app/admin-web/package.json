@@ -12,7 +12,7 @@
     "lucide-react": "^1.8.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "resto001-workspace": "file:..",
+    "resto001-workspace": "file:../..",
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {

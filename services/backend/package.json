@@ -21,7 +21,7 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.4.1",
     "node-cron": "^4.2.1",
-    "resto001-workspace": "file:..",
+    "resto001-workspace": "file:../..",
     "socket.io": "^4.8.3"
   }
 }
