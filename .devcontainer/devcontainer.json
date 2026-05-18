@@ -1,0 +1,12 @@
+{
+  "name": "resto001-dev-multi",
+  "dockerComposeFile": [
+    "docker-compose.yml"
+  ],
+  "service": "frontend",
+  "workspaceFolder": "/workspace/app/mobile/resto-mobile",
+  "forwardPorts": [8081, 19000, 19001, 19002, 5000, 27017],
+  "postCreateCommand": "npm install",
+  "settings": {},
+  "remoteUser": "node"
+}

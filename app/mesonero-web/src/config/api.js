@@ -6,4 +6,4 @@ const hasEnvApiUrl = typeof import.meta.env.VITE_API_URL !== 'undefined'
 const hasEnvSocketUrl = typeof import.meta.env.VITE_SOCKET_URL !== 'undefined'
 
 export const API_BASE_URL = hasEnvApiUrl ? import.meta.env.VITE_API_URL : defaultApiBaseUrl
-export const SOCKET_URL = hasEnvSocketUrl ? import.meta.env.VITE_SOCKET_URL : browserOrigin
+export const SOCKET_URL = hasEnvSocketUrl ? import.meta.env.VITE_SOCKET_URL : defaultApiBaseUrl

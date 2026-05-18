@@ -26,7 +26,7 @@ const server = http.createServer(app);
 
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT) || 5000;
-const CORS_ALLOW_ALL = process.env.CORS_ALLOW_ALL !== 'false';
+const CORS_ALLOW_ALL = true; // Forzar CORS abierto en desarrollo
 const CORS_ALLOWED_ORIGINS = String(process.env.CORS_ALLOWED_ORIGINS || '')
 	.split(',')
 	.map((origin) => origin.trim())
