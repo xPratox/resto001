@@ -889,6 +889,9 @@ export default function App() {
     restoSocket.on('disconnect', handleDisconnect)
     restoSocket.on('ACTUALIZACION_GLOBAL', handleGlobalUpdate)
     restoSocket.on('PEDIDO_GLOBAL', handleGlobalUpdate)
+    // Escuchar eventos adicionales que el backend puede emitir al crear pedidos
+    restoSocket.on('new_order', handleGlobalUpdate)
+    restoSocket.on('kitchen_order_upsert', handleGlobalUpdate)
     restoSocket.on('CAMBIO_ESTADO_MESA', handleOrderSync)
     restoSocket.on('orden_actualizada', handleOrderSync)
     restoSocket.on('pedido_entregado', handleOrderSync)
@@ -906,6 +909,8 @@ export default function App() {
       restoSocket.off('disconnect', handleDisconnect)
       restoSocket.off('ACTUALIZACION_GLOBAL', handleGlobalUpdate)
       restoSocket.off('PEDIDO_GLOBAL', handleGlobalUpdate)
+      restoSocket.off('new_order', handleGlobalUpdate)
+      restoSocket.off('kitchen_order_upsert', handleGlobalUpdate)
       restoSocket.off('CAMBIO_ESTADO_MESA', handleOrderSync)
       restoSocket.off('orden_actualizada', handleOrderSync)
       restoSocket.off('pedido_entregado', handleOrderSync)

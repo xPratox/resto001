@@ -1,6 +1,7 @@
 require('dotenv').config();
 
 const { execFile } = require('child_process');
+const os = require('os');
 const http = require('http');
 const { URL } = require('url');
 const chalkModule = require('chalk');
@@ -24,6 +25,7 @@ const execFileAsync = promisify(execFile);
 const app = express();
 const server = http.createServer(app);
 
+// Prefer explicit HOST from env; default to 0.0.0.0 so server is reachable from LAN
 const HOST = process.env.HOST || '0.0.0.0';
 const PORT = Number(process.env.PORT) || 5000;
 const CORS_ALLOW_ALL = true; // Forzar CORS abierto en desarrollo
@@ -1739,6 +1741,58 @@ app.get('/api/health', (req, res) => {
 });
 
 app.post('/api/login', async (req, res) => {
+	const usuario = String(req.body?.usuario || '').trim().toLowerCase();
+	const contrasena = String(req.body?.contrasena || '');
+
+	if (!usuario || !contrasena) {
+		return res.status(400).json({
+			ok: false,
+			message: 'Debes enviar usuario y contrasena.',
+		});
+	}
+
+	try {
+		const user = await User.findOne({ usuario });
+
+		if (!user) {
+			return res.status(401).json({
+				ok: false,
+				message: 'Credenciales invalidas.',
+			});
+		}
+
+		const isValidPassword = await user.validarContrasena(contrasena);
+
+		if (!isValidPassword) {
+			return res.status(401).json({
+				ok: false,
+				message: 'Credenciales invalidas.',
+			});
+		}
+
+		const token = createAuthToken(user);
+		await setUserOnlineState(user._id, true);
+
+		return res.status(200).json({
+			ok: true,
+			nombre: user.nombre,
+			usuario: user.usuario,
+			rol: user.rol,
+			token,
+			tokenType: 'Bearer',
+			expiresIn: JWT_EXPIRES_IN,
+		});
+	} catch (error) {
+		return res.status(500).json({
+			ok: false,
+			message: 'Error procesando login.',
+			error: error.message,
+		});
+	}
+});
+
+// Ruta alternativa para compatibilidad con clientes que usan /api/users/login
+app.post('/api/users/login', async (req, res) => {
 	const usuario = String(req.body?.usuario || '').trim().toLowerCase();
 	const contrasena = String(req.body?.contrasena || '');
 

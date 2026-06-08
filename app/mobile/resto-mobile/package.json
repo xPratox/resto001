@@ -3,12 +3,13 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "scripts": {
-    "start": "npx expo start --lan",
+    "start": "npx expo start --lan --port 8083",
     "reset-project": "node ./scripts/reset-project.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
-    "lint": "expo lint"
+    "lint": "expo lint",
+    "start:windows": "node ./scripts/expo-start-windows.js"
   },
   "dependencies": {
     "@expo-google-fonts/space-grotesk": "^0.4.1",

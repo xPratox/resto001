@@ -11,7 +11,7 @@
     "dev:mesonero-mobile": "npm --prefix app/mobile/resto-mobile run start",
     "dev:web": "npm --prefix app/mesonero-web run dev -- --host 0.0.0.0",
     "dev:mobile": "npm --prefix app/mobile/resto-mobile run start",
-    "dev": "sh -c 'npm run dev:backend & npm run dev:admin & npm run dev:caja & npm run dev:cocina & npm run dev:web & npm run dev:mobile'",
+    "dev": "npx concurrently -n backend,admin,caja,cocina,web,mobile \"npm run dev:backend\" \"npm run dev:admin\" \"npm run dev:caja\" \"npm run dev:cocina\" \"npm run dev:web\" \"npm run dev:mobile\"",
     "dev:all": "npm run dev",
     "build:admin": "npm --prefix app/admin-web run build",
     "build:caja": "npm --prefix app/caja run build",
@@ -30,10 +30,12 @@
     "docker:smoke": "bash ./infra/scripts/docker-smoke-test.sh"
   },
   "dependencies": {
-    "expo": "^55.0.17"
+    "expo": "^55.0.17",
+    "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
     "@types/react": "~19.2.10",
+    "concurrently": "^9.2.1",
     "typescript": "~5.9.2"
   }
 }
