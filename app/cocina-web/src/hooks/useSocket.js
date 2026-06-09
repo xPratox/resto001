@@ -1,94 +1,85 @@
-import { useEffect, useRef } from 'react'
-
-import { restoSocket } from '../lib/socket'
+import { useEffect, useRef } from 'react';
+import { restoSocket } from '../lib/socket';
 
 function normalizeKitchenOrder(order) {
-  const orderId = order?.idPedido || order?._id
-  const mesa = order?.numeroMesa || order?.table || order?.mesa
+  const orderId = order?.idPedido || order?._id;
+  const mesa = order?.numeroMesa || order?.table || order?.mesa;
 
   if (!orderId || !mesa) {
-    return null
+    console.warn("Pedido recibido con formato inválido:", order);
+    return null;
   }
 
   return {
     idPedido: String(orderId),
     numeroMesa: String(mesa),
     items: Array.isArray(order.items)
-      ? order.items
-          .map((item) => ({
-            nombre: String(item?.nombre || item?.name || '').trim(),
-            cantidad: Number(item?.cantidad || 1),
-            notas: typeof item?.notas === 'string' ? item.notas.trim() : typeof item?.note === 'string' ? item.note.trim() : '',
-          }))
-          .filter((item) => item.nombre && item.cantidad > 0)
+      ? order.items.map((item) => ({
+          nombre: String(item?.nombre || item?.name || '').trim(),
+          cantidad: Number(item?.cantidad || 1),
+          notas: typeof item?.notas === 'string' ? item.notas.trim() : typeof item?.note === 'string' ? item.note.trim() : '',
+        })).filter((item) => item.nombre && item.cantidad > 0)
       : [],
     notas: Array.isArray(order.notas)
       ? order.notas.filter((note) => typeof note === 'string' && note.trim())
       : [],
-  }
+  };
 }
 
 export function useSocket({ setPedidos, setError, onPedidoRemovido }) {
-  const socketRef = useRef(null)
+  const socketRef = useRef(null);
 
   useEffect(() => {
     if (!socketRef.current) {
-      socketRef.current = restoSocket
+      socketRef.current = restoSocket;
     }
 
-    const socket = socketRef.current
+    const socket = socketRef.current;
 
     const handleKitchenOrder = (payload) => {
-      const nuevoPedido = normalizeKitchenOrder(payload)
+      const nuevoPedido = normalizeKitchenOrder(payload);
 
-      if (!nuevoPedido) {
-        return
-      }
+      if (!nuevoPedido) return;
 
       setPedidos((prev) => {
-        const existingIndex = prev.findIndex((pedido) => pedido.idPedido === nuevoPedido.idPedido)
+        const existingIndex = prev.findIndex((p) => p.idPedido === nuevoPedido.idPedido);
+        if (existingIndex === -1) return [...prev, nuevoPedido];
+        
+        const next = [...prev];
+        next[existingIndex] = nuevoPedido;
+        return next;
+      });
 
-        if (existingIndex === -1) {
-          return [...prev, nuevoPedido]
-        }
-
-        const next = [...prev]
-        next[existingIndex] = nuevoPedido
-        return next
-      })
-
-      setError('')
-    }
-
-    const handleConnectError = (error) => {
-      setError(error?.message || 'La cocina perdio la conexion en tiempo real.')
-    }
+      setError('');
+    };
 
     const handleKitchenRemoved = (payload) => {
-      const orderId = String(payload?.idPedido || '')
+      const orderId = String(payload?.idPedido || '');
+      if (!orderId) return;
+      setPedidos((prev) => prev.filter((p) => p.idPedido !== orderId));
+      onPedidoRemovido?.(orderId);
+    };
 
-      if (!orderId) {
-        return
-      }
-
-      setPedidos((prev) => prev.filter((pedido) => pedido.idPedido !== orderId))
-      onPedidoRemovido?.(orderId)
-    }
-
-    socket.on('PEDIDO_GLOBAL', handleKitchenOrder)
-    socket.on('kitchen_order_removed', handleKitchenRemoved)
-    socket.on('connect_error', handleConnectError)
+    // Escuchamos ambos nombres posibles para asegurar la recepción
+    socket.on('PEDIDO_GLOBAL', handleKitchenOrder);
+    socket.on('nuevo_pedido', handleKitchenOrder);
+    socket.on('kitchen_order_removed', handleKitchenRemoved);
+    
+    socket.on('connect_error', (err) => {
+      console.error("❌ Error de conexión Socket:", err);
+      setError(err?.message || 'Error de conexión en tiempo real.');
+    });
 
     if (!socket.connected) {
-      socket.connect()
+      socket.connect();
     }
 
     return () => {
-      socket.off('PEDIDO_GLOBAL', handleKitchenOrder)
-      socket.off('kitchen_order_removed', handleKitchenRemoved)
-      socket.off('connect_error', handleConnectError)
-    }
-  }, [onPedidoRemovido, setError, setPedidos])
+      socket.off('PEDIDO_GLOBAL', handleKitchenOrder);
+      socket.off('nuevo_pedido', handleKitchenOrder);
+      socket.off('kitchen_order_removed', handleKitchenRemoved);
+    };
+  }, [onPedidoRemovido, setError, setPedidos]);
 
-  return socketRef.current
+  return socketRef.current;
 }

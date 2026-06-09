@@ -60,6 +60,7 @@ function normalizeKitchenOrder(order) {
   const comandaId = order?.idComanda || order?._id
   const orderId = order?.orderId || order?.idPedido || order?._id
   const mesa = order?.numeroMesa || order?.table || order?.mesa
+  const status = normalizeStatus(order?.status)
 
   if (!comandaId || !orderId || !mesa) {
     return null
@@ -69,7 +70,7 @@ function normalizeKitchenOrder(order) {
     idComanda: String(comandaId),
     idPedido: String(orderId),
     numeroMesa: String(mesa),
-    status: 'impresa',
+    status,
     pago: String(order?.pago || 'EFECTIVO').trim().toUpperCase(),
     clienteNombre: String(order?.clienteNombre || order?.cliente_nombre || '').trim(),
     mesoneroUsuario: String(order?.mesoneroUsuario || order?.mesonero_usuario || '').trim(),
@@ -111,13 +112,13 @@ export default function Cocina({ authToken, session, onLogout }) {
 
   const totalPedidos = useMemo(() => pedidos.length, [pedidos])
 
-  async function loadKitchenHistory({ silent = false } = {}) {
+  async function loadKitchenOrders({ silent = false } = {}) {
     if (!silent) {
       setLoading(true)
     }
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/kitchen/history`, {
+      const response = await fetch(`${API_BASE_URL}/api/kitchen/orders`, {
         headers: {
           Accept: 'application/json',
         },
@@ -157,10 +158,10 @@ export default function Cocina({ authToken, session, onLogout }) {
   }
 
   useEffect(() => {
-    void loadKitchenHistory()
+    void loadKitchenOrders()
 
     const refreshTimerId = window.setInterval(() => {
-      void loadKitchenHistory({ silent: true })
+      void loadKitchenOrders({ silent: true })
     }, HISTORY_REFRESH_MS)
 
     return () => {
@@ -170,7 +171,7 @@ export default function Cocina({ authToken, session, onLogout }) {
 
   useEffect(() => {
     const refreshFromRealtime = () => {
-      void loadKitchenHistory({ silent: true })
+      void loadKitchenOrders({ silent: true })
     }
 
     const handleConnectError = (connectError) => {
@@ -179,7 +180,19 @@ export default function Cocina({ authToken, session, onLogout }) {
       )
     }
 
-    restoSocket.on('comanda_impresa', refreshFromRealtime)
+    const realtimeEvents = [
+      'PEDIDO_NUEVO',
+      'comanda_impresa',
+      'nuevo_pedido',
+      'PEDIDO_COCINA',
+      'kitchen_order_upsert',
+      'orden_actualizada',
+      'pedido_entregado',
+    ]
+
+    realtimeEvents.forEach((eventName) => {
+      restoSocket.on(eventName, refreshFromRealtime)
+    })
     restoSocket.on('connect_error', handleConnectError)
 
     if (!restoSocket.connected) {
@@ -190,7 +203,9 @@ export default function Cocina({ authToken, session, onLogout }) {
     }
 
     return () => {
-      restoSocket.off('comanda_impresa', refreshFromRealtime)
+      realtimeEvents.forEach((eventName) => {
+        restoSocket.off(eventName, refreshFromRealtime)
+      })
       restoSocket.off('connect_error', handleConnectError)
     }
   }, [authToken])
@@ -204,10 +219,10 @@ export default function Cocina({ authToken, session, onLogout }) {
               Resto 001
             </p>
             <h1 className="mt-1 font-display text-3xl font-semibold tracking-tight text-white sm:text-4xl">
-              Historial cocina
+              Pedidos cocina
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-metallicMuted">
-              Historial de comandas impresas desde caja. Se muestran las ultimas 50.
+              Cola activa de pedidos para cocina. Se muestran hasta 50 pedidos.
             </p>
           </div>
 
@@ -238,7 +253,7 @@ export default function Cocina({ authToken, session, onLogout }) {
 
             <div className="luxury-glass luxury-hover-lift rounded-2xl px-4 py-3 shadow-cyan sm:text-left xl:text-right">
               <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-metallicMuted">
-                Comandas
+                Pedidos
               </p>
               <p className="mt-1 font-display text-4xl font-semibold text-resto-accent">
                 {totalPedidos}
@@ -269,7 +284,7 @@ export default function Cocina({ authToken, session, onLogout }) {
                 Sin pendientes
               </p>
               <p className="mt-2 font-display text-2xl font-semibold text-white">
-                No hay comandas en historial.
+                No hay pedidos activos.
               </p>
             </div>
           </div>
@@ -291,7 +306,7 @@ export default function Cocina({ authToken, session, onLogout }) {
                         Mesa
                       </p>
                       <span className={`rounded-full border px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] ${statusMeta.badgeClass}`}>
-                        Impresa
+                        {statusMeta.label}
                       </span>
                     </div>
                     <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-metallicMuted">

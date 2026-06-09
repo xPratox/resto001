@@ -2,6 +2,7 @@ FROM node:22-bookworm-slim
 
 WORKDIR /app/caja-web
 
+COPY package.json /app/package.json
 COPY app/caja/web/package*.json ./
 
 RUN npm install

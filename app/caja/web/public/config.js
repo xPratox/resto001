@@ -1,0 +1,1 @@
+window.RESTO_CONFIG = window.RESTO_CONFIG || {}

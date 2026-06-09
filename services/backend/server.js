@@ -269,6 +269,26 @@ function emitOrderRealtime(action, order) {
 		return;
 	}
 
+	const realtimePayload = {
+		_id: String(order._id),
+		idPedido: String(order._id),
+		orderId: String(order._id),
+		table: String(order.table || ''),
+		numeroMesa: String(order.table || ''),
+		mesa: String(order.table || ''),
+		status: String(order.status || ORDER_STATUS.KITCHEN).trim().toLowerCase(),
+		cliente_nombre: String(order.cliente_nombre || '').trim(),
+		mesonero_usuario: String(order.mesonero_usuario || '').trim(),
+		seccion: order.seccion || getTableDefinition(order.table)?.section || 'Sala',
+		total: Number(order.total || 0),
+		items: Array.isArray(order.items)
+			? order.items.map((item) => ({
+				...normalizeOrderItem(typeof item?.toObject === 'function' ? item.toObject() : item),
+			}))
+			: [],
+		order,
+	};
+
 	const payload = {
 		action,
 		orderId: String(order._id),
@@ -286,9 +306,11 @@ function emitOrderRealtime(action, order) {
 		if (kitchenPayload) {
 			io.emit('ACTUALIZACION_GLOBAL', order);
 			io.emit('PEDIDO_GLOBAL', order);
+			io.emit('PEDIDO_NUEVO', realtimePayload);
 			io.emit('PEDIDO_COCINA', kitchenPayload);
 			io.emit('nuevo_pedido', kitchenPayload);
 			io.emit('kitchen_order_upsert', kitchenPayload);
+			console.log(`📦 PEDIDO_NUEVO emitido para mesa ${realtimePayload.numeroMesa || 'N/D'} (${realtimePayload.idPedido})`);
 		}
 	} else {
 		io.emit('kitchen_order_removed', {
@@ -302,7 +324,7 @@ function emitOrderRealtime(action, order) {
 	if (action === 'created') {
 		io.emit('CAMBIO_ESTADO_MESA', payload);
 		io.emit('mesa_ocupada', payload);
-		io.emit('new_order', order);
+		io.emit('new_order', realtimePayload);
 		return;
 	}
 
