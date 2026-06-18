@@ -5,6 +5,7 @@ import { ActivityIndicator, Alert, Modal, Pressable, ScrollView, StyleSheet, Tex
 import { NavigationProp, ParamListBase, useNavigation } from '@react-navigation/native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useMobileAuth } from '@/lib/auth-session';
 
 import { type MobileBrandTheme } from '@/constants/theme';
 import { API_BASE_URL } from '@/lib/api';
@@ -19,13 +20,15 @@ type OrderItem = {
   observaciones?: string;
 };
 
+type NormalizedOrderStatus = 'pendiente' | 'en cocina' | 'limpieza' | 'pagado';
+
 type ActiveOrder = {
   _id: string;
   table: string;
   items: OrderItem[];
   total: number;
   montoPagado?: number;
-  status: 'pendiente' | 'en cocina' | 'limpieza' | 'pagado';
+  status: NormalizedOrderStatus;
   hora_pago?: string | null;
 };
 
@@ -63,6 +66,7 @@ function getStatusBadgeStyle(brand: MobileBrandTheme, status?: ActiveOrder['stat
         color: brand.text.onAccent,
       };
     case 'en cocina':
+    case 'en_cocina':
       return {
         backgroundColor: brand.status.danger,
         borderColor: brand.status.danger,
@@ -82,6 +86,18 @@ function getItemNote(item: Partial<OrderItem>) {
   return item.note || item.notas || item.observaciones || 'Sin notas';
 }
 
+function normalizeOrderStatus(status: unknown): NormalizedOrderStatus {
+  if (status === 'limpieza' || status === 'pagado' || status === 'pendiente') {
+    return status;
+  }
+
+  if (status === 'en cocina' || status === 'en_cocina') {
+    return 'en cocina';
+  }
+
+  return 'pendiente';
+}
+
 function normalizeOrder(order: ActiveOrder): ActiveOrder {
   return {
     _id: order._id,
@@ -96,7 +112,7 @@ function normalizeOrder(order: ActiveOrder): ActiveOrder {
     })),
     total: Number(order.total ?? 0),
     montoPagado: Number(order.montoPagado ?? 0),
-    status: order.status ?? 'pendiente',
+    status: normalizeOrderStatus(order.status),
   };
 }
 
@@ -172,7 +188,8 @@ function MenuSectionAccordion({
 }
 
 export default function ActiveOrderScreen() {
-  const { theme: brand, isDark, toggleTheme } = useMobileTheme();
+  const { session } = useMobileAuth();
+  const { theme: brand } = useMobileTheme();
   const styles = useMemo(() => createStyles(brand), [brand]);
   const navigation = useNavigation<NavigationProp<ParamListBase>>();
   const router = useRouter();
@@ -243,17 +260,29 @@ export default function ActiveOrderScreen() {
       setErrorMessage('');
       setIsLoadingOrder(true);
 
-      if (orderId) {
-        const response = await axios.get<{ order: ActiveOrder }>(`${API_BASE_URL}/api/orders/${orderId}`);
-        const normalizedOrder = normalizeOrder(response.data.order);
-        setOrder(normalizedOrder);
-
-        if (!hasLocalEditsRef.current) {
-          setTempOrderItems(normalizedOrder.items);
-          setEditingState(false);
-        }
-
+      if (!session?.token) {
+        setErrorMessage('Debes iniciar sesión como mesonero para ver este pedido.');
+        setIsLoadingOrder(false);
         return;
+      }
+
+      if (orderId) {
+        try {
+          const response = await axios.get<{ order: ActiveOrder }>(`${API_BASE_URL}/api/orders/${orderId}`);
+          const normalizedOrder = normalizeOrder(response.data.order);
+          setOrder(normalizedOrder);
+
+          if (!hasLocalEditsRef.current) {
+            setTempOrderItems(normalizedOrder.items);
+            setEditingState(false);
+          }
+
+          return;
+        } catch (fetchError) {
+          if (!table) {
+            throw fetchError;
+          }
+        }
       }
 
       if (table) {
@@ -268,8 +297,12 @@ export default function ActiveOrderScreen() {
           setEditingState(false);
         }
       }
-    } catch {
-      setErrorMessage('No se pudo cargar el pedido activo de la mesa.');
+    } catch (error) {
+      if (isAxiosError(error)) {
+        setErrorMessage(error.response?.data?.message || 'No se pudo cargar el pedido activo de la mesa.');
+      } else {
+        setErrorMessage('No se pudo cargar el pedido activo de la mesa.');
+      }
     } finally {
       setIsLoadingOrder(false);
     }
@@ -388,15 +421,33 @@ export default function ActiveOrderScreen() {
       return;
     }
 
+    // Validaciones cliente: asegurar que cada item tenga nombre
+    const invalidIndex = tempOrderItems.findIndex((it) => !it || !String(it.name || '').trim());
+    if (invalidIndex >= 0) {
+      const message = `Hay un producto sin nombre en la posicion ${invalidIndex + 1}. Revisa antes de confirmar.`;
+      setErrorMessage(message);
+      Alert.alert('Error de validación', message, [{ text: 'OK' }]);
+      return;
+    }
+
     try {
+      console.log('handleSyncOrder: iniciando sincronizacion', { orderId: order._id, itemsCount: tempOrderItems.length });
       setIsUpdating(true);
       setErrorMessage('');
       setSuccessMessage('');
 
+      // Normalizar precios a number explícitamente antes de enviar
+      const payloadItems = tempOrderItems.map((it) => ({
+        ...it,
+        price: Number(it.price || 0),
+      }));
+
+      console.log('handleSyncOrder: payloadItems sample', payloadItems.slice(0, 5));
+
       const response = await axios.patch<{ order: ActiveOrder; message: string }>(
         `${API_BASE_URL}/api/orders/${order._id}/sync`,
         {
-          items: tempOrderItems,
+          items: payloadItems,
         },
       );
 
@@ -421,11 +472,18 @@ export default function ActiveOrderScreen() {
         },
       ]);
     } catch (error) {
+      console.error('handleSyncOrder: error', error);
+      // loguear detalles de respuesta HTTP si los hay
       if (isAxiosError(error)) {
-        setErrorMessage(error.response?.data?.message || 'No se pudo actualizar el pedido.');
-      } else {
-        setErrorMessage('No se pudo actualizar el pedido.');
+        console.error('handleSyncOrder: http status', error.response?.status);
+        console.error('handleSyncOrder: response body', error.response?.data);
       }
+      const message = isAxiosError(error)
+        ? error.response?.data?.message || (error.code === 'ERR_NETWORK' ? `No se pudo conectar con el backend en ${API_BASE_URL}.` : error.message)
+        : (error instanceof Error ? error.message : 'No se pudo actualizar el pedido.');
+
+      setErrorMessage(message);
+      Alert.alert('Error al actualizar', message, [{ text: 'OK' }]);
     } finally {
       setIsUpdating(false);
     }
@@ -557,30 +615,16 @@ export default function ActiveOrderScreen() {
           <Ionicons name="chevron-back" size={26} color={brand.text.metallicLight} />
         </Pressable>
         <Text style={styles.screenTitle}>Pedido Activo</Text>
-        <Pressable onPress={toggleTheme} hitSlop={10} style={styles.themeToggleButton}>
-          <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={20} color={brand.text.primary} />
-        </Pressable>
       </View>
 
-      {isLoadingOrder ? (
-        <View style={styles.loadingScreen}>
-          <ActivityIndicator size="large" color={brand.accent.sunsetOrange} />
-          <Text style={styles.panelMeta}>Cargando pedido...</Text>
+      {hasLocalEdits ? (
+        <View style={styles.editingHintWrapper}>
+          <Text style={styles.editingHint}>Edicion local activa. El pedido no se refresca hasta confirmar cambios.</Text>
         </View>
-      ) : (
-        <>
-          <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-            {(errorMessage || successMessage) && (
-              <View style={styles.feedbackBlock}>
-                {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-                {successMessage ? <Text style={styles.successText}>{successMessage}</Text> : null}
-                {hasLocalEdits ? (
-                  <Text style={styles.editingHint}>Edicion local activa. El pedido no se refresca hasta confirmar cambios.</Text>
-                ) : null}
-              </View>
-            )}
+      ) : null}
 
-            <View style={styles.orderCard}>
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+        <View style={styles.orderCard}>
               <View style={styles.orderCardHeader}>
                 <Text style={styles.title}>{table || order?.table || 'Mesa activa'}</Text>
                 <View style={[styles.statusBadge, { backgroundColor: statusBadgeTone.backgroundColor, borderColor: statusBadgeTone.borderColor }]}>
@@ -635,8 +679,6 @@ export default function ActiveOrderScreen() {
               <Text style={styles.cancelButtonText}>{isUpdating ? 'Procesando...' : 'Cliente canceló pedido'}</Text>
             </Pressable>
           </View>
-        </>
-      )}
 
       <Modal animationType="slide" transparent visible={isMenuVisible} onRequestClose={() => setIsMenuVisible(false)}>
         <View style={styles.modalBackdrop}>

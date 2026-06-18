@@ -13,8 +13,6 @@ import { Bar, Doughnut } from 'react-chartjs-2'
 
 import { API_BASE_URL } from './config'
 import { restoSocket } from './socket'
-import ThemeToggle from './components/ThemeToggle'
-import { useTheme } from './hooks/useTheme'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, DoughnutController, Tooltip, Legend)
 
@@ -368,17 +366,15 @@ function getEnteredAmountInUsd(rawValue, currency, dailyBcvRate, dailyPesoRate) 
   return Number.NaN
 }
 
-function LoginThemeHeader({ theme, onToggleTheme }) {
+function LoginThemeHeader() {
   return (
     <div className="auth-card-head">
       <p className="auth-kicker">Resto 001</p>
-      <ThemeToggle theme={theme} onToggle={onToggleTheme} compact />
     </div>
   )
 }
 
 export default function App() {
-  const { theme, toggleTheme } = useTheme()
   const [usuario, setUsuario] = useState('')
   const [contrasena, setContrasena] = useState('')
   const [loginError, setLoginError] = useState('')
@@ -892,7 +888,6 @@ export default function App() {
     restoSocket.on('PEDIDO_GLOBAL', handleGlobalUpdate)
     // Escuchar eventos adicionales que el backend puede emitir al crear pedidos
     restoSocket.on('new_order', handleGlobalUpdate)
-    restoSocket.on('kitchen_order_upsert', handleGlobalUpdate)
     restoSocket.on('CAMBIO_ESTADO_MESA', handleOrderSync)
     restoSocket.on('orden_actualizada', handleOrderSync)
     restoSocket.on('pedido_entregado', handleOrderSync)
@@ -912,7 +907,6 @@ export default function App() {
       restoSocket.off('ACTUALIZACION_GLOBAL', handleGlobalUpdate)
       restoSocket.off('PEDIDO_GLOBAL', handleGlobalUpdate)
       restoSocket.off('new_order', handleGlobalUpdate)
-      restoSocket.off('kitchen_order_upsert', handleGlobalUpdate)
       restoSocket.off('CAMBIO_ESTADO_MESA', handleOrderSync)
       restoSocket.off('orden_actualizada', handleOrderSync)
       restoSocket.off('pedido_entregado', handleOrderSync)
@@ -983,42 +977,6 @@ export default function App() {
     }
   }
 
-  const handlePrintComanda = async (pedido) => {
-    if (!pedido?._id) {
-      setErrorMessage('No se pudo identificar el pedido para imprimir.')
-      return
-    }
-
-    if (pedido.soloBebidaSinComanda) {
-      setErrorMessage('Una sola bebida se cobra directo y no genera comanda.')
-      return
-    }
-
-    try {
-      const metodo = metodoPago || 'efectivo'
-
-      await requestCentral('/api/kitchen/comandas/print', {
-        method: 'POST',
-        body: JSON.stringify({
-          orderId: pedido._id,
-          metodo,
-        }),
-      })
-
-      try {
-        await printComandaInCurrentPage(pedido)
-      } catch {
-        setErrorMessage('No se pudo abrir la impresion interna. Verifica permisos del navegador.')
-        return
-      }
-
-      showNotice(`Comanda impresa para ${pedido.mesa}.`)
-      await fetchOrders(true)
-    } catch (error) {
-      setErrorMessage(error.message || 'No se pudo imprimir la comanda.')
-    }
-  }
-
   const maybePrintComandaBeforePayment = async (orderLookup, metodo) => {
     if (!imprimirComandaAlCobrar) {
       return
@@ -1032,20 +990,72 @@ export default function App() {
       return
     }
 
-    await requestCentral('/api/kitchen/comandas/print', {
-      method: 'POST',
-      body: JSON.stringify({
-        orderId: orderLookup.order._id,
-        metodo,
-      }),
-    })
-
-    const pedidoParaImprimir = normalizePedido(orderLookup.order)
+    const metodoPagoLocal = metodo || 'efectivo'
 
     try {
+      // Obtener la orden más reciente desde el backend antes de imprimir
+      const resp = await requestCentral(`/api/orders/${orderLookup.order._id}`)
+      if (!resp?.ok || !resp.order) {
+        throw new Error(resp?.message || 'No se pudo recuperar la orden para imprimir.')
+      }
+
+      const pedidoParaImprimir = normalizePedido(resp.order)
+
+      await requestCentral('/api/kitchen/comandas/print', {
+        method: 'POST',
+        body: JSON.stringify({
+          orderId: resp.order._id,
+          metodo: metodoPagoLocal,
+        }),
+      })
+
       await printComandaInCurrentPage(pedidoParaImprimir)
-    } catch {
-      setErrorMessage('No se pudo abrir la impresion interna. Verifica permisos del navegador.')
+    } catch (error) {
+      setErrorMessage(error?.message || 'No se pudo abrir la impresion interna. Verifica permisos del navegador.')
+    }
+  }
+
+  const handlePrintComanda = async (pedido) => {
+    if (pedido.soloBebidaSinComanda) {
+      setErrorMessage('Una sola bebida se cobra directo y no genera comanda.')
+      return
+    }
+
+    try {
+      const metodo = metodoPago || 'efectivo'
+
+      // Recuperar la orden actualizada antes de imprimir
+      const resp = await requestCentral(`/api/orders/${pedido._id}`)
+      if (!resp?.ok || !resp.order) {
+        throw new Error(resp?.message || 'No se pudo recuperar la orden para imprimir.')
+      }
+
+      await requestCentral('/api/kitchen/comandas/print', {
+        method: 'POST',
+        body: JSON.stringify({
+          orderId: resp.order._id,
+          metodo,
+        }),
+      })
+
+      try {
+        await printComandaInCurrentPage(normalizePedido(resp.order))
+      } catch (error) {
+        setErrorMessage(error?.message || 'No se pudo abrir la impresion interna. Verifica permisos del navegador.')
+        return
+      }
+
+      setOrders((prevOrders) =>
+        prevOrders.map((orden) =>
+          orden._id === pedido._id
+            ? { ...orden, comandaImpresaAt: new Date().toISOString() }
+            : orden,
+        ),
+      )
+
+      showNotice(`Comanda impresa para ${pedido.mesa}.`)
+    } catch (error) {
+      setErrorMessage(error?.message || 'No se pudo imprimir la comanda.')
     }
   }
 
@@ -1068,7 +1078,7 @@ export default function App() {
       <main className="layout caja-shell">
         <section className="auth-overlay" aria-live="polite">
           <article className="auth-card" role="dialog" aria-modal="true" aria-labelledby="authTitleCajaReact">
-            <LoginThemeHeader theme={theme} onToggleTheme={toggleTheme} />
+            <LoginThemeHeader />
             <h1 id="authTitleCajaReact">Login caja</h1>
             <p className="auth-subtitle">Inicia sesion para acceder al panel de cobros.</p>
 
@@ -1189,7 +1199,6 @@ export default function App() {
             </div>
             <div className="sync-user-chip">
               <span className="sync-user-label" title={session?.usuario || 'caja'}>{session?.usuario || 'caja'}</span>
-              <ThemeToggle theme={theme} onToggle={toggleTheme} compact />
               <button
                 type="button"
                 className="sync-logout-btn sync-logout-btn--icon"
@@ -1333,15 +1342,21 @@ export default function App() {
                           <p className="pedido-balance-line">Pagado: {formatMoney(pedido.montoPagado)}</p>
                           <p className={`pedido-balance-line ${pedido.restante > 0 ? 'is-pending' : 'is-complete'}`}>Restante: {formatMoney(pedido.restante)}</p>
                         </div>
-                        <div className="pedido-actions">
+                        <div className="pedido-actions" style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                           <button type="button" className="luxury-primary-button" onClick={() => setSelectedMesa(pedido.mesa)}>Seleccionar</button>
-                          {!pedido.comandaImpresaAt && !pedido.soloBebidaSinComanda ? (
-                            <button type="button" className="secondary" onClick={() => void handlePrintComanda(pedido)}>Imprimir comanda</button>
-                          ) : pedido.soloBebidaSinComanda ? (
+                          <button
+                            type="button"
+                            className="secondary"
+                            disabled={pedido.soloBebidaSinComanda}
+                            onClick={() => void handlePrintComanda(pedido)}
+                          >
+                            Imprimir comanda
+                          </button>
+                          {pedido.soloBebidaSinComanda ? (
                             <span className="pedido-comanda-printed">Solo cobrar</span>
-                          ) : (
+                          ) : pedido.comandaImpresaAt ? (
                             <span className="pedido-comanda-printed">Comanda impresa</span>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                     </article>

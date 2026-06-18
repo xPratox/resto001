@@ -5,12 +5,9 @@ Sistema Integral de Gestion para Restaurantes.
 ## Mapa Rapido
 
 - Backend real: `services/backend`
-- Admin web: `app/admin-web`
-- Mesonero web: `app/mesonero-web`
-- Cocina web: `app/cocina-web`
 - Caja web activa: `app/caja/web`
 - Wrapper de Caja: `app/caja`
-- Mesonero mobile activo: `app/mobile/resto-mobile`
+- Admin / Mesonero Expo Go: `app/mobile/resto-mobile`
 - Infraestructura compartida: `infra/scripts`, `infra/docker`, `.env.docker*`
 
 ## Descripcion
@@ -31,18 +28,15 @@ Ademas, integra sincronizacion Real-Time para mantener la informacion operativa 
 ## Estructura del Proyecto
 
 - `/services/backend`: backend principal y servicios de negocio.
-- `/app/admin-web`: panel administrativo React/Vite.
-- `/app/mesonero-web`: estacion web para mesonero.
-- `/app/cocina-web`: estacion web de cocina en tiempo real para despacho de comandas.
 - `/app/caja`: wrapper del modulo Caja. La app activa vive en `/app/caja/web`.
-- `/app/mobile/resto-mobile`: aplicacion movil Expo para operacion en sala.
+- `/app/mobile/resto-mobile`: aplicacion movil Expo para operacion en sala, incluyendo admin y mesonero.
 - `/infra`: Docker Compose, scripts operativos y plantillas de entorno.
 
 ## Organizacion Actual
 
 El repo quedo organizado por responsabilidad:
 
-- Apps web activas: `app/admin-web`, `app/mesonero-web`, `app/cocina-web`, `app/caja/web`
+- Apps web activas: `app/caja/web`
 - App movil activa: `app/mobile/resto-mobile`
 - Servicio backend: `services/backend`
 - Wrapper/compatibilidad: `app/caja`
@@ -53,21 +47,15 @@ La reorganizacion fisica principal ya quedo aplicada sin cambiar los comandos ra
 ## Comandos Raiz
 
 - `npm run dev:backend`
-- `npm run dev:admin`
 - `npm run dev:caja`
-- `npm run dev:cocina`
-- `npm run dev:mesonero-web`
-- `npm run dev:mesonero-mobile`
+- `npm run dev:mobile`
 - `npm run dev:all`
 - `npm run verify:active`
 
 ## Estaciones del Sistema
 
-- Admin Web
-- Mesonero Movil
-- Mesonero Web
+- Admin / Mesonero Expo Go
 - Caja Web
-- Cocina Web
 
 ## Funcionalidades Generales
 
@@ -97,7 +85,7 @@ El workspace incluye configuracion Docker para desarrollo y produccion.
 
 ### Desarrollo
 
-Levanta MongoDB, Backend, Admin Web, Mesonero Web, Caja Web y Cocina Web con hot reload, y ademas abre Expo Go para Mesonero Mobile:
+Levanta MongoDB, Backend, Caja Web y Expo Go para la app movil:
 
 ```bash
 npm run docker:up
@@ -121,16 +109,12 @@ npm run docker:up:fg
 Puertos expuestos:
 
 - Backend: `http://localhost:5000`
-- Admin Web: `http://localhost:5174`
-- Mesonero Web: `http://localhost:5173`
 - Caja Web: `http://localhost:5175`
-- Cocina Web: `http://localhost:5176`
+- Expo Web / QR: `http://localhost:19006`
 
-Mesonero Mobile se usa principalmente con Expo Go desde el QR que imprime `npm run docker:up`.
-Como acceso secundario de prueba en navegador, el contenedor Expo Web responde en `http://localhost:19006`.
-
+La app móvil se usa principalmente con Expo Go desde el QR que imprime `npm run docker:up`.
 MongoDB no se publica al host en el stack de desarrollo para evitar conflictos con una instancia local ya corriendo en `27017`.
-Los puertos publicados se pueden cambiar desde `.env.docker` con `BACKEND_HOST_PORT`, `ADMIN_WEB_HOST_PORT`, `MESONERO_WEB_HOST_PORT`, `MESONERO_MOBILE_HOST_PORT`, `CAJA_WEB_HOST_PORT` y `COCINA_WEB_HOST_PORT`.
+Los puertos publicados se pueden cambiar desde `.env.docker` con `BACKEND_HOST_PORT`, `MESONERO_MOBILE_HOST_PORT` y `CAJA_WEB_HOST_PORT`.
 
 Detener stack:
 
@@ -166,7 +150,6 @@ Puertos expuestos:
 - Mesonero Web: `http://localhost:8082`
 - Mesonero Movil Web: `http://localhost:8085`
 - Caja Web: `http://localhost:8083`
-- Cocina Web: `http://localhost:8084`
 
 Detener stack:
 

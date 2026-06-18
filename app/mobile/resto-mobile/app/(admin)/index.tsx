@@ -155,7 +155,7 @@ const DEFAULT_USER_FORM: UserFormState = {
 };
 
 const FALLBACK_CATEGORIES = ['Platos', 'Bebidas', 'Postres', 'Especiales'];
-const USER_ROLES = ['admin', 'caja', 'mesonero', 'cocina'];
+const USER_ROLES = ['admin', 'caja', 'mesonero'];
 const ADMIN_NAV_ITEMS: { id: AdminSection; label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'stats-chart-outline' },
   { id: 'menu', label: 'Menu / Platos', icon: 'restaurant-outline' },
@@ -665,7 +665,7 @@ export default function AdminMobileScreen() {
   }
 
   const isAdminRole = String(session.rol || '').trim().toLowerCase() === 'admin';
-  const isSuperAdmin = String(session.usuario || '').trim().toLowerCase() === 'admin';
+  const isSuperAdmin = isAdminRole;
 
   const activeSectionLabel = ADMIN_NAV_ITEMS.find((item) => item.id === activeSection)?.label || 'Dashboard';
 
@@ -675,11 +675,9 @@ export default function AdminMobileScreen() {
         <View style={styles.headerCopy}>
           <Text style={styles.eyebrow}>ADMIN MOBILE</Text>
           <Text style={styles.title}>{activeSectionLabel}</Text>
+          <Text style={[styles.subtitle, { fontSize: 11, marginTop: 4 }]}>{`API: ${API_BASE_URL}`}</Text>
         </View>
         <View style={styles.headerActions}>
-          <Pressable style={styles.ghostButton} onPress={() => router.push('/(admin)/web')}>
-            <Text style={styles.ghostButtonText}>Admin Web</Text>
-          </Pressable>
           <Pressable style={styles.ghostButton} onPress={() => void loadAdminData(false)}>
             {isRefreshing ? <ActivityIndicator size="small" color={theme.text.primary} /> : <Text style={styles.ghostButtonText}>Actualizar</Text>}
           </Pressable>
@@ -854,7 +852,7 @@ export default function AdminMobileScreen() {
                       {isSavingRates ? <ActivityIndicator size="small" color={theme.text.onAccent} /> : <Text style={styles.primaryButtonText}>Guardar tasas</Text>}
                     </Pressable>
                   ) : (
-                    <Text style={styles.metricHelper}>Solo el super admin puede actualizar las tasas.</Text>
+                    <Text style={styles.metricHelper}>Solo los administradores pueden actualizar las tasas.</Text>
                   )}
 
                   {isAdminRole && (
@@ -1259,8 +1257,8 @@ const createStyles = (theme: MobileBrandTheme) =>
     listCard: {
       borderRadius: 18,
       borderWidth: 1,
-      borderColor: '#1A1A1A',
-      backgroundColor: '#0A0A0A',
+      borderColor: theme.border.subtle,
+      backgroundColor: theme.background.deepCarbon,
       padding: 16,
       gap: 8,
     },
@@ -1279,7 +1277,7 @@ const createStyles = (theme: MobileBrandTheme) =>
       fontFamily: Fonts?.serif,
     },
     priceTag: {
-      color: '#D7D7D7',
+      color: theme.text.secondary,
       fontSize: 14,
       fontWeight: '400',
       fontFamily: Fonts?.sans,
@@ -1306,8 +1304,8 @@ const createStyles = (theme: MobileBrandTheme) =>
       minHeight: 36,
       borderRadius: 10,
       borderWidth: 1,
-      borderColor: '#3A3A3A',
-      backgroundColor: '#1F1F1F',
+      borderColor: theme.border.subtle,
+      backgroundColor: theme.surface.card,
       paddingHorizontal: 12,
       alignItems: 'center',
       justifyContent: 'center',
@@ -1321,9 +1319,9 @@ const createStyles = (theme: MobileBrandTheme) =>
     menuActionDangerButton: {
       minHeight: 36,
       borderRadius: 10,
-      backgroundColor: '#5A2A2A',
+      backgroundColor: theme.surface.card,
       borderWidth: 1,
-      borderColor: '#703232',
+      borderColor: theme.border.strong,
       paddingHorizontal: 12,
       alignItems: 'center',
       justifyContent: 'center',
@@ -1446,8 +1444,8 @@ const createStyles = (theme: MobileBrandTheme) =>
       minHeight: 46,
       borderRadius: 12,
       borderWidth: 1,
-      borderColor: '#BF953F',
-      backgroundColor: '#000000',
+      borderColor: theme.border.accent,
+      backgroundColor: theme.surface.card,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'center',
@@ -1656,8 +1654,8 @@ const createStyles = (theme: MobileBrandTheme) =>
     menuCardContainer: {
       borderRadius: 22,
       borderWidth: 1,
-      borderColor: '#1A1A1A',
-      backgroundColor: '#0A0A0A',
+      borderColor: theme.border.subtle,
+      backgroundColor: theme.surface.card,
       padding: 0,
       marginTop: 10,
       marginBottom: 10,
@@ -1665,10 +1663,10 @@ const createStyles = (theme: MobileBrandTheme) =>
       maxHeight: 420,
       overflow: 'hidden',
       shadowColor: '#000000',
-      shadowOpacity: 0.18,
-      shadowRadius: 18,
-      shadowOffset: { width: 0, height: 10 },
-      elevation: 6,
+      shadowOpacity: 0.06,
+      shadowRadius: 8,
+      shadowOffset: { width: 0, height: 6 },
+      elevation: 3,
     },
     menuCardScroll: {
       flex: 1,
@@ -1679,9 +1677,9 @@ const createStyles = (theme: MobileBrandTheme) =>
     },
     menuAccordionCard: {
       borderRadius: 20,
-      backgroundColor: '#0A0A0A',
+      backgroundColor: theme.surface.card,
       borderWidth: 1,
-      borderColor: '#1A1A1A',
+      borderColor: theme.border.subtle,
       overflow: 'hidden',
     },
     menuAccordionHeader: {
@@ -1691,7 +1689,7 @@ const createStyles = (theme: MobileBrandTheme) =>
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      backgroundColor: '#0A0A0A',
+      backgroundColor: theme.surface.card,
     },
     menuAccordionTitle: {
       color: '#BF953F',

@@ -55,7 +55,7 @@ async function login() {
       console.log('disconnect', reason);
     });
 
-    const events = ['ACTUALIZACION_GLOBAL', 'PEDIDO_GLOBAL', 'new_order', 'PEDIDO_COCINA', 'kitchen_order_upsert', 'orden_actualizada', 'order_updated', 'new_order'];
+    const events = ['ACTUALIZACION_GLOBAL', 'PEDIDO_GLOBAL', 'new_order', 'orden_actualizada', 'order_updated', 'new_order'];
     events.forEach((ev) => socket.on(ev, (p) => console.log(`EVENT ${ev}:`, JSON.stringify(p).slice(0, 1000))));
 
     // keep process alive

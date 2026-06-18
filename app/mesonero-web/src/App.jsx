@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import OrderWizard from './components/OrderWizard'
 import { API_BASE_URL } from './config/api'
-import ThemeToggle from './components/ThemeToggle'
-import { useTheme } from './hooks/useTheme'
 
 const initialOrder = {
   table: '',
@@ -12,7 +10,6 @@ const initialOrder = {
 }
 
 function App() {
-  const { theme, toggleTheme } = useTheme()
   const [currentOrder, setCurrentOrder] = useState(initialOrder)
   const [usuario, setUsuario] = useState('')
   const [contrasena, setContrasena] = useState('')
@@ -120,7 +117,6 @@ function App() {
         <section className="mesonero-auth-card luxury-hover-lift w-full max-w-md rounded-3xl p-6 shadow-2xl">
           <div className="flex items-start justify-between gap-4">
             <p className="text-xs font-semibold uppercase tracking-[0.32em] text-resto-accent/80">Resto 001</p>
-            <ThemeToggle theme={theme} onToggle={toggleTheme} compact />
           </div>
           <h1 className="mt-2 text-3xl font-bold text-white">Login mesonero</h1>
           <p className="mt-2 text-sm text-slate-300">Inicia sesion para acceder al panel.</p>
@@ -169,7 +165,6 @@ function App() {
       <div className="mesonero-session-bar luxury-hover-lift mx-auto mb-3 flex w-full max-w-[1200px] items-center justify-between gap-3 rounded-xl px-3 py-2 text-xs text-slate-200">
         <span>Sesion: {session?.usuario} ({session?.rol})</span>
         <div className="flex items-center gap-2">
-          <ThemeToggle theme={theme} onToggle={toggleTheme} compact />
           <button type="button" className="mesonero-session-action rounded-md border border-slate-600 px-2 py-1" onClick={handleLogout}>Cerrar sesion</button>
         </div>
       </div>

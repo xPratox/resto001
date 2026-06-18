@@ -146,11 +146,11 @@ const lightRestoBrandTheme: MobileBrandTheme = {
   },
 };
 
-export function getRestoBrandTheme(mode: MobileThemeMode = 'dark'): MobileBrandTheme {
+export function getRestoBrandTheme(mode: MobileThemeMode = 'light'): MobileBrandTheme {
   return mode === 'light' ? lightRestoBrandTheme : darkRestoBrandTheme;
 }
 
-export const RestoBrandTheme = darkRestoBrandTheme;
+export const RestoBrandTheme = lightRestoBrandTheme;
 
 export const Colors = {
   light: {

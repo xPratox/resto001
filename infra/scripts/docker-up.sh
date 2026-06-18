@@ -21,7 +21,6 @@ ADMIN_WEB_HOST_PORT=${ADMIN_WEB_HOST_PORT:-5174}
 MESONERO_WEB_HOST_PORT=${MESONERO_WEB_HOST_PORT:-5173}
 MESONERO_MOBILE_HOST_PORT=${MESONERO_MOBILE_HOST_PORT:-19006}
 CAJA_WEB_HOST_PORT=${CAJA_WEB_HOST_PORT:-5175}
-COCINA_WEB_HOST_PORT=${COCINA_WEB_HOST_PORT:-5176}
 
 docker compose -p "${COMPOSE_PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up --build -d
 
@@ -33,7 +32,6 @@ echo "- Backend: http://localhost:${BACKEND_HOST_PORT}"
 echo "- Admin: http://localhost:${ADMIN_WEB_HOST_PORT}"
 echo "- Mesonero Web: http://localhost:${MESONERO_WEB_HOST_PORT}"
 echo "- Caja: http://localhost:${CAJA_WEB_HOST_PORT}"
-echo "- Cocina: http://localhost:${COCINA_WEB_HOST_PORT}"
 echo "- Mesonero Mobile Web (secundario): http://localhost:${MESONERO_MOBILE_HOST_PORT}"
 echo "Abriendo Expo para mesonero-mobile en modo LAN..."
 echo "Escanea el QR con Expo Go."

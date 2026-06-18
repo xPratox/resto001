@@ -99,6 +99,43 @@ async function ensureRateResetOnStartup({
 	return true;
 }
 
+async function ensureDailyRateReset({
+	GlobalSetting,
+	brandLog,
+	timezone = 'America/Caracas',
+	baseBcvRate = 0,
+	baseCopRate = 0,
+} = {}) {
+	if (!GlobalSetting) {
+		throw new Error('GlobalSetting es requerido para asegurar el reseteo diario de tasas.');
+	}
+
+	const now = new Date();
+	const todayKey = toDateKey(now, timezone);
+	const settings = await GlobalSetting.findOne({ key: 'global' }).lean();
+
+	const latestRateUpdateAt = pickLatestDate([
+		settings?.manualRates?.bcv?.updatedAt,
+		settings?.manualRates?.cop?.updatedAt,
+		settings?.rateHistory?.[0]?.updatedAt,
+		settings?.rateControl?.lastResetAt,
+	]);
+
+	if (latestRateUpdateAt && toDateKey(latestRateUpdateAt, timezone) === todayKey) {
+		return false;
+	}
+
+	await resetDailyRates({
+		GlobalSetting,
+		baseBcvRate,
+		baseCopRate,
+		timestamp: now,
+	});
+
+	brandLog?.info?.('[AutoReset] Tasas reiniciadas automáticamente al detectar un nuevo día.');
+	return true;
+}
+
 function startDailyRateResetJob({
 	GlobalSetting,
 	brandLog,
@@ -141,5 +178,6 @@ function startDailyRateResetJob({
 
 module.exports = {
 	ensureRateResetOnStartup,
+	ensureDailyRateReset,
 	startDailyRateResetJob,
 };

@@ -3,11 +3,8 @@
 ## Active Modules
 
 - `services/backend`: API, auth, Socket.IO, menu, reports, tables, rates.
-- `app/admin-web`: React/Vite admin dashboard.
-- `app/mesonero-web`: React/Vite waiter workstation.
-- `app/cocina-web`: React/Vite kitchen workstation.
 - `app/caja/web`: React/Vite Caja workstation.
-- `app/mobile/resto-mobile`: Expo mobile client for Expo Go.
+- `app/mobile/resto-mobile`: Expo mobile client for Expo Go, including admin and mesonero.
 
 ## Wrappers And Infrastructure
 

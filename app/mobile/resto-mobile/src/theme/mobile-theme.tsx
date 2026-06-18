@@ -1,6 +1,5 @@
 import { DarkTheme, DefaultTheme, type Theme } from '@react-navigation/native';
-import { createContext, useContext, useMemo, useState, type ReactNode } from 'react';
-import { useColorScheme } from 'react-native';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
 
 import { getRestoBrandTheme, type MobileBrandTheme, type MobileThemeMode } from '@/constants/theme';
 
@@ -14,8 +13,6 @@ type MobileThemeContextValue = {
 };
 
 const MobileThemeContext = createContext<MobileThemeContextValue | null>(null);
-let persistedThemeMode: MobileThemeMode | null = null;
-
 function createNavigationTheme(mode: MobileThemeMode, theme: MobileBrandTheme): Theme {
   const baseTheme = mode === 'light' ? DefaultTheme : DarkTheme;
 
@@ -34,26 +31,20 @@ function createNavigationTheme(mode: MobileThemeMode, theme: MobileBrandTheme): 
 }
 
 export function MobileThemeProvider({ children }: { children: ReactNode }) {
-  const systemColorScheme = useColorScheme();
-  const [mode, setModeState] = useState<MobileThemeMode>(persistedThemeMode ?? (systemColorScheme === 'light' ? 'light' : 'dark'));
-
-  const setMode = (nextMode: MobileThemeMode) => {
-    persistedThemeMode = nextMode;
-    setModeState(nextMode);
-  };
+  const mode: MobileThemeMode = 'light';
 
   const value = useMemo<MobileThemeContextValue>(() => {
     const theme = getRestoBrandTheme(mode);
 
     return {
       mode,
-      isDark: mode === 'dark',
+      isDark: false,
       theme,
       navigationTheme: createNavigationTheme(mode, theme),
-      toggleTheme: () => setMode(mode === 'dark' ? 'light' : 'dark'),
-      setMode,
+      toggleTheme: () => {},
+      setMode: (_mode: MobileThemeMode) => {},
     };
-  }, [mode]);
+  }, []);
 
   return <MobileThemeContext.Provider value={value}>{children}</MobileThemeContext.Provider>;
 }

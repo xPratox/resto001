@@ -1,7 +1,7 @@
 import { ThemeProvider } from '@react-navigation/native';
 import { FontAwesome5 } from '@expo/vector-icons';
 import { SpaceGrotesk_500Medium, SpaceGrotesk_700Bold, useFonts } from '@expo-google-fonts/space-grotesk';
-import { Redirect, Stack, useSegments } from 'expo-router';
+import { Slot, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import axios, { isAxiosError } from 'axios';
 import { useEffect, useMemo, useState } from 'react';
@@ -37,6 +37,10 @@ function clearAuthenticatedClients() {
 function applyAuthenticatedClients(token: string) {
   axios.defaults.headers.common.Authorization = `Bearer ${token}`;
   setSocketAuthToken(token);
+
+  if (!restoSocket.connected) {
+    restoSocket.connect();
+  }
 }
 
 export default function RootLayout() {
@@ -59,7 +63,7 @@ function RootLayoutContent() {
   const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [isAuthClientsReady, setIsAuthClientsReady] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const { theme, isDark, toggleTheme, navigationTheme } = useMobileTheme();
+  const { theme, navigationTheme } = useMobileTheme();
   const segments = useSegments();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const normalizedRole = String(session?.rol || '').trim().toLowerCase();
@@ -67,6 +71,8 @@ function RootLayoutContent() {
   const isMesoneroSession = normalizedRole === 'mesonero';
   const isAdminSession = normalizedRole === 'admin';
   const currentRootSegment = String(segments[0] || '');
+
+  const router = useRouter();
 
   const roleHomePath = useMemo(() => {
     if (isMesoneroSession) {
@@ -95,6 +101,14 @@ function RootLayoutContent() {
 
     return false;
   }, [currentRootSegment, isAdminSession, isAuthenticated, isMesoneroSession]);
+
+  useEffect(() => {
+    if (!roleHomePath || isRouteAllowedForRole) {
+      return;
+    }
+
+    router.replace(roleHomePath);
+  }, [isRouteAllowedForRole, roleHomePath, router]);
 
   useEffect(() => {
     const defaultTextStyle = { fontFamily: Fonts?.sans, fontWeight: '500' as const };
@@ -150,7 +164,7 @@ function RootLayoutContent() {
     return (
       <SafeAreaView style={styles.loadingScreen}>
         <ActivityIndicator color={theme.accent.primary} />
-        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <StatusBar style="dark" />
       </SafeAreaView>
     );
   }
@@ -220,12 +234,7 @@ function RootLayoutContent() {
     return (
       <SafeAreaView style={styles.authScreen}>
         <View style={styles.authCard}>
-          <View style={styles.authTopRow}>
-            <Pressable onPress={toggleTheme} style={styles.themeTogglePill}>
-              <FontAwesome5 name={isDark ? 'sun' : 'moon'} size={12} color={theme.text.primary} />
-              <Text style={styles.themeToggleText}>{isDark ? 'Claro' : 'Oscuro'}</Text>
-            </Pressable>
-          </View>
+          <View style={styles.authTopRow} />
           <Text style={styles.authTitle}>Login Resto001</Text>
 
           <View style={styles.fieldWrap}>
@@ -259,7 +268,7 @@ function RootLayoutContent() {
             {isLoading ? <ActivityIndicator color={theme.text.onAccent} /> : <Text style={styles.loginButtonText}>Entrar</Text>}
           </Pressable>
         </View>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <StatusBar style="dark" />
       </SafeAreaView>
     );
   }
@@ -269,12 +278,7 @@ function RootLayoutContent() {
       <MobileAuthContext.Provider value={{ session, logout: handleLogout }}>
         <SafeAreaView style={styles.authScreen}>
           <View style={styles.authCard}>
-            <View style={styles.authTopRow}>
-              <Pressable onPress={toggleTheme} style={styles.themeTogglePill}>
-                <FontAwesome5 name={isDark ? 'sun' : 'moon'} size={12} color={theme.text.primary} />
-                <Text style={styles.themeToggleText}>{isDark ? 'Claro' : 'Oscuro'}</Text>
-              </Pressable>
-            </View>
+            <View style={styles.authTopRow} />
             <Text style={styles.authEyebrow}>ROL DETECTADO</Text>
             <Text style={styles.authTitle}>{session?.nombre || session?.usuario || 'Usuario'}</Text>
             <Text style={styles.authSubtitle}>La sesión se autenticó correctamente, pero esta demo móvil solo permite roles admin y mesonero. Rol detectado: {normalizedRole || 'desconocido'}.</Text>
@@ -282,26 +286,26 @@ function RootLayoutContent() {
               <Text style={styles.secondaryButtonText}>Cerrar sesión</Text>
             </Pressable>
           </View>
-          <StatusBar style={isDark ? 'light' : 'dark'} />
+          <StatusBar style="dark" />
         </SafeAreaView>
       </MobileAuthContext.Provider>
     );
   }
 
   if (roleHomePath && !isRouteAllowedForRole) {
-    return <Redirect href={roleHomePath} />;
+    return (
+      <SafeAreaView style={styles.loadingScreen}>
+        <ActivityIndicator color={theme.accent.primary} />
+        <StatusBar style="dark" />
+      </SafeAreaView>
+    );
   }
 
   return (
     <MobileAuthContext.Provider value={{ session, logout: handleLogout }}>
       <ThemeProvider value={navigationTheme}>
-        <Stack>
-          {isMesoneroSession ? <Stack.Screen name="(tabs)" options={{ headerShown: false }} /> : null}
-          {isMesoneroSession ? <Stack.Screen name="Tables" options={{ headerShown: false }} /> : null}
-          {isMesoneroSession ? <Stack.Screen name="active-order" options={{ headerShown: false }} /> : null}
-          {isAdminSession ? <Stack.Screen name="(admin)" options={{ headerShown: false }} /> : null}
-        </Stack>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
+        <Slot />
+        <StatusBar style="dark" />
       </ThemeProvider>
     </MobileAuthContext.Provider>
   );

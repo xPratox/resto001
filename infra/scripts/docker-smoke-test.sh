@@ -14,7 +14,6 @@ backend_port="${BACKEND_HOST_PORT:-5000}"
 admin_port="${ADMIN_WEB_HOST_PORT:-5174}"
 mesonero_port="${MESONERO_WEB_HOST_PORT:-5173}"
 caja_port="${CAJA_WEB_HOST_PORT:-5175}"
-cocina_port="${COCINA_WEB_HOST_PORT:-5176}"
 
 echo "[smoke] Verificando endpoints del stack Resto 001..."
 
@@ -41,6 +40,5 @@ check "Backend health" "http://127.0.0.1:${backend_port}/api/health"
 check "Admin Web" "http://127.0.0.1:${admin_port}"
 check "Mesonero Web" "http://127.0.0.1:${mesonero_port}"
 check "Caja Web" "http://127.0.0.1:${caja_port}"
-check "Cocina Web" "http://127.0.0.1:${cocina_port}"
 
 echo "[smoke] Todo responde correctamente."

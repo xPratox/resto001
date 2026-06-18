@@ -36,43 +36,6 @@ services:
     networks:
       - resto001-network
 
-  admin-web:
-    build:
-      context: ../..
-      dockerfile: app/admin-web/Dockerfile.prod
-    restart: unless-stopped
-    ports:
-      - "8081:80"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    depends_on:
-      backend:
-        condition: service_healthy
-    networks:
-      - resto001-network
-
-  mesonero-web:
-    build:
-      context: ../..
-      dockerfile: app/mesonero-web/Dockerfile.prod
-    restart: unless-stopped
-    ports:
-      - "8082:80"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    depends_on:
-      backend:
-        condition: service_healthy
-    networks:
-      - resto001-network
 
   mesonero-mobile:
     build:
@@ -112,24 +75,6 @@ services:
     networks:
       - resto001-network
 
-  cocina-web:
-    build:
-      context: ../..
-      dockerfile: app/cocina-web/Dockerfile.prod
-    restart: unless-stopped
-    ports:
-      - "8084:80"
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
-    depends_on:
-      backend:
-        condition: service_healthy
-    networks:
-      - resto001-network
 
 networks:
   resto001-network:

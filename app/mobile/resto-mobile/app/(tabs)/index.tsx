@@ -360,7 +360,7 @@ function resetOrderState(
 }
 
 export default function HomeScreen() {
-  const { theme: brand, isDark, toggleTheme } = useMobileTheme();
+  const { theme: brand } = useMobileTheme();
   const styles = useMemo(() => createStyles(brand), [brand]);
   const { width: windowWidth } = useWindowDimensions();
   const { session, logout } = useMobileAuth();
@@ -1160,40 +1160,26 @@ export default function HomeScreen() {
     setSuccessMessage('');
 
     try {
-    const payload = {
-      tableId: currentOrder.table,
-      cliente_nombre: currentOrder.cliente_nombre,
-      seccion: currentOrder.seccion,
-      items: currentOrder._id ? pendingItemsToAdd : currentOrder.items,
-    };
+      const payload = {
+        tableId: currentOrder.table,
+        cliente_nombre: currentOrder.cliente_nombre,
+        seccion: currentOrder.seccion,
+        items: currentOrder._id ? [...currentOrder.items, ...pendingItemsToAdd] : currentOrder.items,
+      };
 
-      const response = await axios.post<{ order: CurrentOrder }>(`${API_BASE_URL}/api/orders`, payload);
+      const response = currentOrder._id
+        ? await axios.patch<{ order: CurrentOrder }>(
+            `${API_BASE_URL}/api/orders/${encodeURIComponent(currentOrder._id)}/update-items`,
+            { items: payload.items },
+          )
+        : await axios.post<{ order: CurrentOrder }>(`${API_BASE_URL}/api/orders`, payload);
+
       const normalizedOrder = normalizeOrder(response.data.order);
       console.log('Pedido emitido:', response.data.order);
 
       setCurrentOrder(normalizedOrder);
 
       const successCopy = '¡Pedido procesado con éxito!';
-
-      if (currentOrder._id) {
-        resetOrderState(
-          setCurrentOrder,
-          setPendingItemsToAdd,
-          setStep,
-          setSelectedPlate,
-          setNote,
-          setSelectedQuantity,
-          setIsNotesModalVisible,
-        );
-        Alert.alert('Pedido actualizado', successCopy);
-        router.replace({
-          pathname: '/(tabs)',
-          params: {
-            orderUpdatedSuccess: successCopy,
-          },
-        });
-        return;
-      }
 
       resetOrderState(
         setCurrentOrder,
@@ -1204,13 +1190,28 @@ export default function HomeScreen() {
         setSelectedQuantity,
         setIsNotesModalVisible,
       );
-      Alert.alert('Pedido enviado', successCopy);
+
+      if (currentOrder._id) {
+        Alert.alert('Pedido actualizado', successCopy);
+      } else {
+        Alert.alert('Pedido enviado', successCopy);
+      }
+
       router.replace({
         pathname: '/(tabs)',
         params: {
           orderUpdatedSuccess: successCopy,
         },
       });
+
+      if (!currentOrder._id) {
+        try {
+          const tablesResponse = await axios.get<{ tables: TableStatus[] }>(`${API_BASE_URL}/api/tables/status`);
+          setTableStatuses(tablesResponse.data.tables ?? []);
+        } catch {
+          // noop
+        }
+      }
 
       try {
         const tablesResponse = await axios.get<{ tables: TableStatus[] }>(`${API_BASE_URL}/api/tables/status`);
@@ -1252,10 +1253,6 @@ export default function HomeScreen() {
           <View style={styles.heroTopRow}>
             <Text style={styles.overline}>Resto 001</Text>
             <View style={styles.heroActionsRow}>
-              <Pressable style={styles.themeTogglePill} onPress={toggleTheme}>
-                <FontAwesome5 name={isDark ? 'sun' : 'moon'} size={12} color={brand.text.primary} />
-                <Text style={styles.themeToggleText}>{isDark ? 'Claro' : 'Oscuro'}</Text>
-              </Pressable>
               {session?.usuario ? (
                 <Pressable style={styles.sessionPill} onPress={logout}>
                   <Text style={styles.sessionPillText}>{session.usuario} (salir)</Text>
@@ -1655,7 +1652,7 @@ export default function HomeScreen() {
 const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: brand.background.deepCarbon,
   },
   content: {
     padding: 20,
@@ -1941,9 +1938,9 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
   },
   menuAccordionCard: {
     borderRadius: 20,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: brand.background.deepCarbon,
     borderWidth: 1,
-    borderColor: '#1A1A1A',
+    borderColor: brand.border.subtle,
     overflow: 'hidden',
   },
   menuAccordionHeader: {
@@ -1953,7 +1950,7 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#0A0A0A',
+    backgroundColor: brand.background.deepCarbon,
   },
   menuAccordionTitle: {
     color: '#BF953F',
@@ -1985,9 +1982,9 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
   menuCard: {
     minHeight: 86,
     borderRadius: 16,
-    backgroundColor: '#0A0A0A',
+    backgroundColor: brand.background.deepCarbon,
     borderWidth: 1,
-    borderColor: '#1A1A1A',
+    borderColor: brand.border.subtle,
     paddingHorizontal: 18,
     paddingVertical: 16,
     flexDirection: 'row',
@@ -1996,7 +1993,7 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
     position: 'relative',
   },
   menuCardActive: {
-    borderColor: '#BF953F',
+    borderColor: brand.accent.primary,
     borderWidth: 1.5,
   },
   menuQuantityBadge: {
@@ -2006,10 +2003,10 @@ const createStyles = (brand: MobileBrandTheme) => StyleSheet.create({
     paddingHorizontal: 6,
     paddingVertical: 2,
     borderRadius: 8,
-    backgroundColor: 'rgba(10,10,10,0.95)',
+    backgroundColor: brand.accent.primary,
   },
   menuQuantityBadgeText: {
-    color: '#BF953F',
+    color: brand.text.onAccent,
     fontSize: 12,
     fontWeight: '700',
     fontFamily: Fonts?.serif,

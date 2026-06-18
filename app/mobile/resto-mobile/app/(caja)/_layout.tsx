@@ -1,17 +1,21 @@
-import { Redirect, Stack } from 'expo-router';
+import { useRouter } from 'expo-router';
+import { useEffect } from 'react';
 
 import { useMobileAuth } from '@/lib/auth-session';
 
 export default function CajaMobileLayout() {
   const { session } = useMobileAuth();
+  const router = useRouter();
 
-  if (session?.rol === 'admin') {
-    return <Redirect href="/(admin)" />;
-  }
+  useEffect(() => {
+    if (session?.rol === 'admin') {
+      router.replace('/(admin)');
+    } else if (session?.rol === 'mesonero') {
+      router.replace('/(tabs)');
+    } else {
+      router.replace('/');
+    }
+  }, [router, session?.rol]);
 
-  if (session?.rol === 'mesonero') {
-    return <Redirect href="/(tabs)" />;
-  }
-
-  return <Redirect href="/" />;
+  return null;
 }

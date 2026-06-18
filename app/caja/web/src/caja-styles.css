@@ -32,7 +32,7 @@
   --text-3xl: 30px;
   --leading-base: 1.55;
   --leading-tight: 1.35;
-  color-scheme: light dark;
+  color-scheme: light;
 }
 
 html:not(.dark) {

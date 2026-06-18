@@ -6,7 +6,7 @@
 
 @layer base {
   :root {
-    color-scheme: light dark;
+    color-scheme: light;
     font-family: 'Space Grotesk', sans-serif;
     font-synthesis: none;
     text-rendering: optimizeLegibility;

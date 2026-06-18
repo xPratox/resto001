@@ -1,26 +1,27 @@
-import { Redirect, Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
+import { useEffect } from 'react';
 
 import { useMobileAuth } from '@/lib/auth-session';
 
 export default function AdminMobileLayout() {
   const { session } = useMobileAuth();
+  const router = useRouter();
 
-  if (session?.rol === 'mesonero') {
-    return <Redirect href="/(tabs)" />;
-  }
+  useEffect(() => {
+    if (session?.rol === 'mesonero') {
+      router.replace('/(tabs)');
+    } else if (session?.rol === 'caja') {
+      router.replace('/(caja)');
+    }
+  }, [router, session?.rol]);
 
-  if (session?.rol === 'caja') {
-    return <Redirect href="/(caja)" />;
-  }
-
-  if (session?.rol === 'cocina') {
-    return <Redirect href="/(cocina)" />;
+  if (session?.rol === 'mesonero' || session?.rol === 'caja') {
+    return null;
   }
 
   return (
     <Stack>
       <Stack.Screen name="index" options={{ headerShown: false }} />
-      <Stack.Screen name="web" options={{ headerShown: false }} />
     </Stack>
   );
 }

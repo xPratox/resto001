@@ -1,5 +1,6 @@
-import { Redirect, Tabs } from 'expo-router';
-import React from 'react';
+import { Tabs, useRouter } from 'expo-router';
+import React, { useEffect } from 'react';
+import { ActivityIndicator, View } from 'react-native';
 
 import { useMobileAuth } from '@/lib/auth-session';
 import { useMobileTheme } from '@/src/theme/mobile-theme';
@@ -7,17 +8,22 @@ import { useMobileTheme } from '@/src/theme/mobile-theme';
 export default function TabLayout() {
   const { session } = useMobileAuth();
   const { theme } = useMobileTheme();
+  const router = useRouter();
 
-  if (session?.rol === 'admin') {
-    return <Redirect href="/(admin)" />;
-  }
+  useEffect(() => {
+    if (session?.rol === 'admin') {
+      router.replace('/(admin)');
+    } else if (session?.rol === 'caja') {
+      router.replace('/(caja)');
+    }
+  }, [router, session?.rol]);
 
-  if (session?.rol === 'caja') {
-    return <Redirect href="/(caja)" />;
-  }
-
-  if (session?.rol === 'cocina') {
-    return <Redirect href="/(cocina)" />;
+  if (session?.rol === 'admin' || session?.rol === 'caja') {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.background.deepCarbon }}>
+        <ActivityIndicator color={theme.accent.primary} />
+      </View>
+    );
   }
 
   return (
